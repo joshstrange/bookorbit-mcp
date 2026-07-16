@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An MCP (Model Context Protocol) server that exposes the **text of ebooks** stored in a
-self-hosted [Book Orbit](https://bookorbit.home.joshstrange.com) instance to LLMs. It is
+self-hosted [BookOrbit](https://github.com/bookorbit/bookorbit) instance to LLMs. It is
 **navigation-first**: rather than dumping whole books into context, it lets a model find a
 book, inspect its chapter list, and pull only the pieces it needs.
 
@@ -32,7 +32,7 @@ Keep all five green.
 
 ### Live checks (need a real server; read `.env`)
 
-These hit a real Book Orbit instance and are **not** part of `npm test`:
+These hit a real BookOrbit instance and are **not** part of `npm test`:
 
 ```bash
 node --import tsx scripts/smoke.mts      # search -> parse -> chapter -> in-book search
@@ -48,7 +48,7 @@ plus either `BOOKORBIT_USERNAME`+`BOOKORBIT_PASSWORD` (preferred) or a static `B
 Request flow for a tool call:
 
 ```
-tools.ts  ->  book-service.ts  ->  bookorbit-client.ts   (HTTP to Book Orbit)
+tools.ts  ->  book-service.ts  ->  bookorbit-client.ts   (HTTP to BookOrbit)
                      |          ->  epub-structure.ts     (TOC/spine -> sections)
                      |          ->  html-to-text.ts       (XHTML slice -> text)
                      +--------->  cache.ts                (disk, per bookId)
@@ -59,7 +59,7 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
 
 ### Non-obvious design decisions
 
-- **The MCP does NOT download/parse EPUB zips.** Book Orbit exposes a server-side reader
+- **The MCP does NOT download/parse EPUB zips.** BookOrbit exposes a server-side reader
   backend — `GET /epub/{bookId}/info` (spine + nested TOC + metadata) and
   `GET /epub/{bookId}/file/{path}` (one internal XHTML file). The client uses those; there is
   intentionally no zip/EPUB library dependency.
@@ -76,10 +76,10 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   via `offset`/`nextOffset`; `search_in_book` returns snippets plus a re-fetchable
   chapter+offset. Preserve these guarantees when editing tools.
 
-- **Auth is short-lived.** Book Orbit access tokens expire in ~15 minutes and there is no
+- **Auth is short-lived.** BookOrbit access tokens expire in ~15 minutes and there is no
   long-lived API key. `bookorbit-client.ts` logs in with username/password, sends the JWT as a
   Bearer token, captures the `refresh_token` cookie, and on a 401 tries `/auth/refresh` then a
-  full re-login (`reauthenticate`). Book Orbit's search param is `q` (not `query`), and the base
+  full re-login (`reauthenticate`). BookOrbit's search param is `q` (not `query`), and the base
   URL is normalized to strip a trailing slash.
 
 - **Cache is build-once, per book.** First `getParsedBook(bookId)` fetches every referenced
@@ -93,7 +93,7 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   annotations + counts, `GET /annotations/books`), and `get_annotations` (one book's highlights/
   notes, `GET /books/{bookId}/annotations`) — call the client directly, like `search_books`/
   `get_book`, and are NOT cached (annotations are mutable user data). Each annotation carries
-  Book Orbit's own `chapterTitle`/`chapterIndex`, which are its reader model's numbering and are
+  BookOrbit's own `chapterTitle`/`chapterIndex`, which are its reader model's numbering and are
   **not** the `list_chapters`/`get_chapter` section indices — do not conflate them; match on
   `chapterTitle` if you need the surrounding text.
 

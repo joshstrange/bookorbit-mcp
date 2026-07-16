@@ -1,4 +1,4 @@
-/** Shared types for the Book Orbit MCP server. */
+/** Shared types for the BookOrbit MCP server. */
 
 /** A book as returned by GET /books/search. */
 export interface BookSearchResult {
@@ -92,9 +92,9 @@ export interface Annotation {
   style: string | null;
   /** The user's own comment; null for a plain highlight. */
   note: string | null;
-  /** Book Orbit's own chapter name — NOT a list_chapters label. */
+  /** BookOrbit's own chapter name — NOT a list_chapters label. */
   chapterTitle: string | null;
-  /** Book Orbit's own chapter index — NOT a get_chapter index. */
+  /** BookOrbit's own chapter index — NOT a get_chapter index. */
   chapterIndex: number | null;
   /** Where the annotation came from, e.g. "koreader". */
   origin: string | null;

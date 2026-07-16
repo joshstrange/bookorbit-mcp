@@ -83,7 +83,7 @@ async function guard(fn: () => Promise<ToolResult>): Promise<ToolResult> {
     return await fn();
   } catch (err) {
     if (err instanceof BookOrbitError) {
-      return fail(`Book Orbit error (${err.status}) on ${err.path}: ${err.message}`);
+      return fail(`BookOrbit error (${err.status}) on ${err.path}: ${err.message}`);
     }
     return fail(`Error: ${(err as Error).message}`);
   }
@@ -99,7 +99,7 @@ export function registerTools(
     {
       title: "Search books",
       description:
-        "Search the Book Orbit library by title, author, or series. Returns matching " +
+        "Search the BookOrbit library by title, author, or series. Returns matching " +
         "books with their bookId and available formats. Use this first to find the " +
         "book (and confirm it has an EPUB) before reading its text.",
       inputSchema: {
@@ -375,7 +375,7 @@ export function registerTools(
       description:
         "Return the user's own annotations (highlights and notes) for one book by bookId, " +
         "ordered by the book's chapters. Each includes the highlighted text, any note, and " +
-        "the book's own chapterTitle/chapterIndex. NOTE: chapterIndex is Book Orbit's own " +
+        "the book's own chapterTitle/chapterIndex. NOTE: chapterIndex is BookOrbit's own " +
         "chapter numbering, NOT the index used by list_chapters/get_chapter — match on " +
         "chapterTitle if you want to read the surrounding text.",
       inputSchema: {
@@ -846,7 +846,7 @@ export function registerTools(
     {
       title: "List libraries",
       description:
-        "List the libraries in the Book Orbit instance with each library's book count, " +
+        "List the libraries in the BookOrbit instance with each library's book count, " +
         "total size, and per-format counts.",
       inputSchema: {},
     },

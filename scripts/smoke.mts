@@ -1,5 +1,5 @@
 /**
- * Live end-to-end smoke test against the real Book Orbit server.
+ * Live end-to-end smoke test against the real BookOrbit server.
  * Uses credentials from .env. Run: node --import tsx scripts/smoke.mts
  * Not part of the unit suite (hits the network).
  */

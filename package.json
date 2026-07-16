@@ -1,7 +1,7 @@
 {
   "name": "bookorbit-mcp",
   "version": "0.1.0",
-  "description": "MCP server that exposes the text of ebooks managed by Book Orbit to LLMs, without overwhelming them.",
+  "description": "MCP server that exposes the text of ebooks managed by BookOrbit to LLMs, without overwhelming them.",
   "type": "module",
   "license": "MIT",
   "author": "Josh Strange",

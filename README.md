@@ -1,7 +1,7 @@
 # bookorbit-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that exposes the **text of your
-ebooks** — managed by [Book Orbit](https://bookorbit.home.joshstrange.com) — to
+ebooks** — managed by [BookOrbit](https://github.com/bookorbit/bookorbit) — to
 LLMs, so an assistant can answer questions about _what happens inside a book_
 without you copy-pasting chapters.
 
@@ -11,7 +11,7 @@ model find a book, look at its chapter list, and pull only the pieces it needs.
 
 ## How it works
 
-Book Orbit stores raw EPUB files and exposes a reader backend
+BookOrbit stores raw EPUB files and exposes a reader backend
 (`/epub/{bookId}/info` + `/epub/{bookId}/file/{path}`). This server uses that
 backend to read a book's structure, fetch only the needed chapters, strip the
 XHTML to plain text, and cache the result on disk. Nothing is re-downloaded
@@ -79,7 +79,7 @@ All tools are **read-only**.
 
 - **EPUB only** (v1). Books without an EPUB file return a clear error from the
   text tools.
-- **Auth:** Book Orbit access tokens expire after ~15 minutes and there is no
+- **Auth:** BookOrbit access tokens expire after ~15 minutes and there is no
   long-lived API key, so the server logs in with your **username + password** and
   refreshes / re-logs in automatically. A static `BOOKORBIT_TOKEN` is supported
   for quick tests but will not auto-refresh.
@@ -145,7 +145,7 @@ node --import tsx scripts/mcp-check.mts   # drives the built server over the MCP
 - **Cache layout:** `~/.cache/bookorbit-mcp/<bookId>/book.json` (chapter list +
   sizes) and `text/section-NNN.txt` (extracted text per chapter).
 - **Discovery, reading-state, stats, and annotation tools are live passthroughs**
-  to Book Orbit and are **not cached** (that data is mutable); only extracted EPUB
+  to BookOrbit and are **not cached** (that data is mutable); only extracted EPUB
   text is cached.
 - **Not included (v1):** semantic/RAG search, cross-library content search,
   PDF/MOBI, and any write operations. The cache layout leaves room to add a
