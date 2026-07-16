@@ -3,10 +3,31 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BookOrbitClient } from "./bookorbit-client.js";
 import { BookOrbitError } from "./bookorbit-client.js";
 import type { BookService } from "./book-service.js";
+import type { Annotation } from "./types.js";
 
 /** Default cap on chapter text returned per call (~6k tokens). */
 const DEFAULT_MAX_CHARS = 24_000;
 const MAX_ALLOWED_CHARS = 50_000;
+
+/** Default page size for the annotation hub (matches the server default). */
+const DEFAULT_ANNOTATION_PAGE_SIZE = 25;
+const MAX_ANNOTATION_PAGE_SIZE = 100;
+
+/** Shape one annotation into the trimmed, model-friendly object the tools return. */
+function shapeAnnotation(a: Annotation) {
+  return {
+    id: a.id,
+    text: a.text,
+    note: a.note,
+    chapterTitle: a.chapterTitle,
+    chapterIndex: a.chapterIndex,
+    color: a.color,
+    style: a.style,
+    origin: a.origin,
+    pageno: a.pageno,
+    createdAt: a.createdAt,
+  };
+}
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -239,6 +260,106 @@ export function registerTools(
           caseSensitive ?? false,
         );
         return ok({ bookId, query, hitCount: hits.length, hits });
+      }),
+  );
+
+  server.registerTool(
+    "list_annotations",
+    {
+      title: "List all annotations",
+      description:
+        "List ALL of the user's annotations (their highlights and notes) across the whole " +
+        "library, newest-page first. Each item includes the highlighted text, any note, the " +
+        "book title/author, and the book's own chapter title/index. Paginated: use page with " +
+        "the returned total/pageSize to browse, or pass bookId to filter to one book. " +
+        "Returns a stats summary (book count, how many have notes, and where they came from).",
+      inputSchema: {
+        page: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe("1-based page number (default 1)."),
+        pageSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_ANNOTATION_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_ANNOTATION_PAGE_SIZE}).`),
+        bookId: z
+          .number()
+          .int()
+          .optional()
+          .describe("Filter to one book's annotations (from search_books)."),
+      },
+    },
+    async ({ page, pageSize, bookId }) =>
+      guard(async () => {
+        const result = await client.listAnnotations({
+          page,
+          pageSize: pageSize ?? DEFAULT_ANNOTATION_PAGE_SIZE,
+          bookId,
+        });
+        return ok({
+          total: result.total,
+          page: result.page,
+          pageSize: result.pageSize,
+          stats: result.stats,
+          annotations: result.items.map((a) => ({
+            ...shapeAnnotation(a),
+            bookId: a.bookId,
+            bookTitle: a.bookTitle,
+            author: a.author,
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_annotated_books",
+    {
+      title: "List annotated books",
+      description:
+        "List the books the user has annotated (highlighted / added notes to), each with an " +
+        "annotation count. Use this to discover which books have annotations before pulling " +
+        "them with get_annotations — like search_books precedes reading.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        const books = await client.listAnnotatedBooks();
+        return ok({ bookCount: books.length, books });
+      }),
+  );
+
+  server.registerTool(
+    "get_annotations",
+    {
+      title: "Get a book's annotations",
+      description:
+        "Return the user's own annotations (highlights and notes) for one book by bookId, " +
+        "ordered by the book's chapters. Each includes the highlighted text, any note, and " +
+        "the book's own chapterTitle/chapterIndex. NOTE: chapterIndex is Book Orbit's own " +
+        "chapter numbering, NOT the index used by list_chapters/get_chapter — match on " +
+        "chapterTitle if you want to read the surrounding text.",
+      inputSchema: {
+        bookId: z.number().int().describe("The book's id (from search_books)."),
+      },
+    },
+    async ({ bookId }) =>
+      guard(async () => {
+        const annotations = await client.getAnnotations(bookId);
+        const ordered = [...annotations].sort(
+          (a, b) =>
+            (a.chapterIndex ?? 0) - (b.chapterIndex ?? 0) ||
+            a.createdAt.localeCompare(b.createdAt),
+        );
+        return ok({
+          bookId,
+          annotationCount: ordered.length,
+          annotations: ordered.map(shapeAnnotation),
+        });
       }),
   );
 }

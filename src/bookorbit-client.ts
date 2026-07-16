@@ -1,4 +1,11 @@
-import type { BookDetail, BookSearchResult, EpubInfo } from "./types.js";
+import type {
+  Annotation,
+  AnnotatedBookSummary,
+  AnnotationHubPage,
+  BookDetail,
+  BookSearchResult,
+  EpubInfo,
+} from "./types.js";
 
 export interface ClientConfig {
   baseUrl: string;
@@ -60,6 +67,30 @@ export class BookOrbitClient {
   async getEpubFile(bookId: number, internalPath: string): Promise<string> {
     const res = await this.authFetch(`/epub/${bookId}/file/${encodePath(internalPath)}`);
     return res.text();
+  }
+
+  /** The books that have annotations (highlights/notes), with counts. */
+  async listAnnotatedBooks(): Promise<AnnotatedBookSummary[]> {
+    return this.getJson<AnnotatedBookSummary[]>(`/annotations/books`);
+  }
+
+  /** All of one book's annotations (highlights/notes). */
+  async getAnnotations(bookId: number): Promise<Annotation[]> {
+    return this.getJson<Annotation[]>(`/books/${bookId}/annotations`);
+  }
+
+  /** A page of the cross-library annotation hub. */
+  async listAnnotations(opts?: {
+    page?: number;
+    pageSize?: number;
+    bookId?: number;
+  }): Promise<AnnotationHubPage> {
+    const params = new URLSearchParams();
+    if (opts?.page != null) params.set("page", String(opts.page));
+    if (opts?.pageSize != null) params.set("pageSize", String(opts.pageSize));
+    if (opts?.bookId != null) params.set("bookId", String(opts.bookId));
+    const qs = params.toString();
+    return this.getJson<AnnotationHubPage>(`/annotations${qs ? `?${qs}` : ""}`);
   }
 
   // --- internals -----------------------------------------------------------

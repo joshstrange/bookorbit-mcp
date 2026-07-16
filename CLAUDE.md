@@ -87,6 +87,16 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   `<CACHE_DIR>/<bookId>/book.json` + `text/section-NNN.txt`. Later calls read from disk.
   Concurrent builds of the same book are de-duplicated via an in-flight map.
 
+- **Annotations (a.k.a. notes/highlights) are a live, uncached passthrough.** Three read-only
+  tools — `list_annotations` (all annotations across the library, paginated via `page`/`pageSize`
+  over `GET /annotations`, optional `bookId` filter), `list_annotated_books` (which books have
+  annotations + counts, `GET /annotations/books`), and `get_annotations` (one book's highlights/
+  notes, `GET /books/{bookId}/annotations`) — call the client directly, like `search_books`/
+  `get_book`, and are NOT cached (annotations are mutable user data). Each annotation carries
+  Book Orbit's own `chapterTitle`/`chapterIndex`, which are its reader model's numbering and are
+  **not** the `list_chapters`/`get_chapter` section indices — do not conflate them; match on
+  `chapterTitle` if you need the surrounding text.
+
 ### Testing note
 
 `test/fixtures/` are **synthetic** (`epub-info.json`, `chapter-bundle.xhtml`) and deliberately
@@ -98,5 +108,7 @@ change.
 ## Scope (v1)
 
 EPUB only, read-only, single-user/local, keyword (not semantic) search scoped to one book.
-Out of scope by design: RAG/embeddings, cross-library content search, PDF/MOBI, and any write
-operations. The cache layout leaves room for a later cross-book index.
+Reading the user's own annotations (highlights/notes) is in scope — see the annotations tools
+above. Out of scope by design: RAG/embeddings, cross-library content search, PDF/MOBI,
+bookmarks, and any write operations (including creating/editing annotations). The cache layout
+leaves room for a later cross-book index.

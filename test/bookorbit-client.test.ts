@@ -113,6 +113,38 @@ test("throws BookOrbitError with server message on non-2xx", async () => {
   );
 });
 
+test("annotation endpoints hit the right paths with Bearer auth", async () => {
+  let authHeader: string | null = null;
+  const { fetch, calls } = mockFetch((url, init) => {
+    authHeader = new Headers(init.headers).get("authorization");
+    if (url.includes("/annotations/books")) return json([{ bookId: 116, count: 15 }]);
+    if (url.includes("/books/116/annotations")) return json([{ id: 1, bookId: 116 }]);
+    return json({ items: [], total: 0, page: 1, pageSize: 25, stats: {} });
+  });
+  const client = new BookOrbitClient({
+    baseUrl: "https://ex.com",
+    token: "abc",
+    fetchImpl: fetch,
+  });
+
+  const books = await client.listAnnotatedBooks();
+  assert.equal(books[0].bookId, 116);
+  assert.equal(authHeader, "Bearer abc");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/annotations/books");
+
+  await client.getAnnotations(116);
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/books/116/annotations");
+
+  await client.listAnnotations({ page: 2, pageSize: 5, bookId: 116 });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/annotations?page=2&pageSize=5&bookId=116",
+  );
+
+  await client.listAnnotations();
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/annotations");
+});
+
 test("encodes internal epub file paths but keeps slashes", async () => {
   const { fetch, calls } = mockFetch(
     () => new Response("<html>ok</html>", { status: 200 }),
