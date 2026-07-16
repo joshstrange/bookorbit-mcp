@@ -357,6 +357,16 @@ function stubClient() {
         formatCounts: { epub: 168, pdf: 1, mobi: 1 },
       };
     },
+    // The three kind-dispatch tools; stubs echo their args for forwarding assertions.
+    async suggestMetadata(kind: string, q: string) {
+      return { echoedKind: kind, echoedQ: q, sample: [{ name: "Author Name" }] };
+    },
+    async getLibraryStatistic(kind: string, opts?: unknown) {
+      return { echoedKind: kind, echoedOpts: opts ?? null, items: [] };
+    },
+    async getUserStatistic(kind: string, opts?: unknown) {
+      return { echoedKind: kind, echoedOpts: opts ?? null };
+    },
   } as unknown as BookOrbitClient;
   return client;
 }
@@ -617,6 +627,39 @@ test("get_library_stats and get_reading_stats pass summaries through", async () 
   const reading = await call("get_reading_stats", {});
   assert.equal(reading.data.completedBooks, 1);
   assert.equal(reading.data.meanProgressPercent, 42);
+});
+
+test("suggest_metadata forwards kind + q and passes matches through", async () => {
+  const { call } = await setup();
+  const { data } = await call("suggest_metadata", { kind: "authors", q: "sand" });
+  assert.equal(data.kind, "authors");
+  assert.equal(data.q, "sand");
+  assert.equal(data.matches.echoedKind, "authors");
+  assert.equal(data.matches.echoedQ, "sand");
+  assert.equal(data.matches.sample[0].name, "Author Name");
+});
+
+test("get_library_statistic forwards kind + libraryIds and wraps the passthrough", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_library_statistic", {
+    kind: "top-authors",
+    libraryIds: [1, 2],
+  });
+  assert.equal(data.kind, "top-authors");
+  assert.equal(data.data.echoedKind, "top-authors");
+  assert.deepEqual(data.data.echoedOpts.libraryIds, [1, 2]);
+});
+
+test("get_reading_statistic forwards per-kind extras", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_reading_statistic", {
+    kind: "goal-trajectory",
+    days: 365,
+    goalBooks: 24,
+  });
+  assert.equal(data.kind, "goal-trajectory");
+  assert.equal(data.data.echoedOpts.days, 365);
+  assert.equal(data.data.echoedOpts.goalBooks, 24);
 });
 
 test("list_libraries trims config and attaches per-library stats", async () => {

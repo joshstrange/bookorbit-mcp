@@ -72,5 +72,29 @@ const currently = await parse(
 );
 console.log(`list_currently_reading -> ${currently.count} book(s)`);
 
+const suggest = await parse(
+  await client.callTool({
+    name: "suggest_metadata",
+    arguments: { kind: "authors", q: "a" },
+  }),
+);
+console.log(`suggest_metadata(authors,"a") -> ${suggest.matches.length} match(es)`);
+
+const libStat = await parse(
+  await client.callTool({
+    name: "get_library_statistic",
+    arguments: { kind: "top-authors" },
+  }),
+);
+console.log(`get_library_statistic(top-authors) -> ${libStat.data.items.length} rows`);
+
+const readStat = await parse(
+  await client.callTool({
+    name: "get_reading_statistic",
+    arguments: { kind: "peak-hours", days: 365 },
+  }),
+);
+console.log(`get_reading_statistic(peak-hours) -> ${readStat.data.length} hours`);
+
 await client.close();
 console.log("MCP CHECK OK");

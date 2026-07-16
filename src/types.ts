@@ -276,6 +276,78 @@ export interface UserStatisticsSummary {
   meanProgressPercent: number;
 }
 
+/**
+ * Metadata typeahead facets (GET /metadata/{facet}?q=). The value doubles as the
+ * URL path segment. Empty/whitespace `q` returns `[]` (no "list everything" mode);
+ * `genres`/`tags` items also carry an `id`, the rest are `{ name }` only.
+ */
+export const METADATA_FACET_KINDS = [
+  "authors",
+  "series",
+  "genres",
+  "tags",
+  "publishers",
+  "languages",
+  "narrators",
+  "collections",
+] as const;
+export type MetadataFacetKind = (typeof METADATA_FACET_KINDS)[number];
+
+/**
+ * Library-wide statistics charts (GET /statistics/{kind}). The value doubles as
+ * the URL path segment. `summary` is excluded — it has its own `get_library_stats`
+ * tool. Only `books-added-over-time` honors `granularity`/`range`.
+ */
+export const LIBRARY_STAT_KINDS = [
+  "books-added-over-time",
+  "format-distribution",
+  "format-share-over-time",
+  "genre-distribution",
+  "genre-cooccurrence",
+  "language-distribution",
+  "largest-books",
+  "page-count-distribution",
+  "publication-decade",
+  "publication-year-timeline",
+  "storage-by-format",
+  "top-authors",
+  "top-series",
+  "acquisition-lag-scatter",
+  "library-integrity-gauge",
+  "library-metadata-completeness",
+  "metadata-completeness",
+  "metadata-freshness-gauge",
+  "metadata-score-distribution",
+] as const;
+export type LibraryStatKind = (typeof LIBRARY_STAT_KINDS)[number];
+
+/**
+ * Personal reading-statistics charts (GET /user-statistics/{kind}). The value
+ * doubles as the URL path segment. `summary` is excluded — it has its own
+ * `get_reading_stats` tool. `session-timeline` ignores `days` and honors
+ * `year`/`week`; `progress-funnel` honors `comparePrevious`; `goal-trajectory`
+ * honors `goalBooks`.
+ */
+export const USER_STAT_KINDS = [
+  "daily-reading",
+  "reading-heatmap",
+  "reading-pace",
+  "peak-hours",
+  "favorite-days",
+  "session-timeline",
+  "session-archetypes",
+  "completion-timeline",
+  "completion-latency",
+  "completion-race",
+  "progress-funnel",
+  "reading-survival",
+  "goal-trajectory",
+  "genre-reading-time",
+  "author-genre-chord",
+  "reading-source-distribution",
+] as const;
+export type UserStatKind = (typeof USER_STAT_KINDS)[number];
+
 /** GET /libraries — the per-library config blob (only a few fields are surfaced). */
 export interface Library {
   id: number;

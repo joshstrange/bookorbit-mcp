@@ -116,4 +116,49 @@ for (const lib of libraries) {
   console.log(`   library "${lib.name}": ${ls.totalBooks} books`);
 }
 
+console.log("\n10) metadata typeahead (suggest_metadata)");
+for (const kind of ["authors", "genres"] as const) {
+  const matches = (await client.suggestMetadata(kind, "a")) as Array<{ name: string }>;
+  console.log(
+    `   ${kind}?q=a → ${matches.length} match(es)` +
+      (matches[0] ? `, e.g. "${matches[0].name}"` : ""),
+  );
+}
+
+console.log("\n11) library statistic (get_library_statistic)");
+const topAuthors = (await client.getLibraryStatistic("top-authors")) as {
+  items: Array<{ name: string; count: number }>;
+};
+console.log(
+  `   top-authors → ${topAuthors.items.length} rows` +
+    (topAuthors.items[0]
+      ? `, top: "${topAuthors.items[0].name}" (${topAuthors.items[0].count})`
+      : ""),
+);
+const formats = (await client.getLibraryStatistic("format-distribution")) as {
+  items: Array<{ format: string; count: number }>;
+};
+console.log(
+  `   format-distribution → ${formats.items.map((i) => `${i.format}:${i.count}`).join(", ")}`,
+);
+
+console.log("\n12) reading statistic (get_reading_statistic)");
+const peak = (await client.getUserStatistic("peak-hours", { days: 365 })) as Array<{
+  hour: number;
+  readingSeconds: number;
+}>;
+const busiest = peak.reduce(
+  (a, b) => (b.readingSeconds > a.readingSeconds ? b : a),
+  peak[0],
+);
+console.log(
+  `   peak-hours → ${peak.length} hours` +
+    (busiest ? `, busiest hour ${busiest.hour} (${busiest.readingSeconds}s)` : ""),
+);
+const goal = (await client.getUserStatistic("goal-trajectory", { goalBooks: 24 })) as {
+  goalBooks: number;
+  points: unknown[];
+};
+console.log(`   goal-trajectory (24/yr) → ${goal.points.length} monthly points`);
+
 console.log("\nSMOKE OK");

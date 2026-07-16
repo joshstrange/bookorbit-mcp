@@ -10,6 +10,8 @@ import type {
   EpubInfo,
   Library,
   LibraryStats,
+  LibraryStatKind,
+  MetadataFacetKind,
   NamedShelf,
   Paged,
   ReadingProgress,
@@ -18,6 +20,7 @@ import type {
   SeriesSummary,
   StatisticsSummary,
   UserStatisticsSummary,
+  UserStatKind,
 } from "./types.js";
 
 /** How similar/related books are looked up (GET /books/{id}/...). */
@@ -234,6 +237,64 @@ export class BookOrbitClient {
     return this.getJson<UserStatisticsSummary>(`/user-statistics/summary`);
   }
 
+  /**
+   * A metadata typeahead facet (authors/series/genres/…). `q` is a case- and
+   * accent-insensitive "contains" match; an empty/whitespace `q` returns `[]`.
+   * Body is passed through as-is (a bare `{ name }[]` or `{ id, name }[]` array).
+   */
+  async suggestMetadata(kind: MetadataFacetKind, q: string): Promise<unknown> {
+    const params = new URLSearchParams({ q });
+    return this.getJson<unknown>(`/metadata/${kind}?${params}`);
+  }
+
+  /**
+   * One library-wide statistics chart (distributions, timelines, top-N, gauges).
+   * Optionally scoped to `libraryIds`. Only `books-added-over-time` honors
+   * `granularity`/`range`. Pre-aggregated body is passed through as-is.
+   */
+  async getLibraryStatistic(
+    kind: LibraryStatKind,
+    opts?: {
+      libraryIds?: number[];
+      granularity?: "monthly" | "yearly";
+      range?: "last-year" | "last-5-years" | "all-time";
+    },
+  ): Promise<unknown> {
+    const params = statsParams(opts?.libraryIds);
+    if (opts?.granularity != null) params.set("granularity", opts.granularity);
+    if (opts?.range != null) params.set("range", opts.range);
+    const qs = params.toString();
+    return this.getJson<unknown>(`/statistics/${kind}${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * One personal reading-statistics chart, optionally scoped to `libraryIds` and a
+   * trailing `days` window. Per-kind extras (`year`/`week`, `comparePrevious`,
+   * `goalBooks`) are forwarded when provided; the server ignores irrelevant ones.
+   * Pre-aggregated body is passed through as-is.
+   */
+  async getUserStatistic(
+    kind: UserStatKind,
+    opts?: {
+      libraryIds?: number[];
+      days?: number;
+      year?: number;
+      week?: number;
+      comparePrevious?: boolean;
+      goalBooks?: number;
+    },
+  ): Promise<unknown> {
+    const params = statsParams(opts?.libraryIds);
+    if (opts?.days != null) params.set("days", String(opts.days));
+    if (opts?.year != null) params.set("year", String(opts.year));
+    if (opts?.week != null) params.set("week", String(opts.week));
+    if (opts?.comparePrevious != null)
+      params.set("comparePrevious", String(opts.comparePrevious));
+    if (opts?.goalBooks != null) params.set("goalBooks", String(opts.goalBooks));
+    const qs = params.toString();
+    return this.getJson<unknown>(`/user-statistics/${kind}${qs ? `?${qs}` : ""}`);
+  }
+
   /** All libraries (the raw per-library config blob). */
   async listLibraries(): Promise<Library[]> {
     return this.getJson<Library[]>(`/libraries`);
@@ -360,6 +421,13 @@ function pageParams(opts?: PageOpts): URLSearchParams {
 function pageQuery(opts?: PageOpts): string {
   const qs = pageParams(opts).toString();
   return qs ? `?${qs}` : "";
+}
+
+/** Build a statistics query with a repeatable `libraryIds` key (?libraryIds=1&libraryIds=2). */
+function statsParams(libraryIds?: number[]): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const id of libraryIds ?? []) params.append("libraryIds", String(id));
+  return params;
 }
 
 /** Read Set-Cookie headers across runtimes (undici exposes getSetCookie). */

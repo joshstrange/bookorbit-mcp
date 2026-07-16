@@ -108,15 +108,31 @@ author-books` via a `kind` arg), `list_series` / `get_series_books`, `list_autho
   - _Reading state:_ `get_reading_progress` (`GET /books/{id}/progress` + best-effort
     `/audio-progress`), `list_currently_reading`, `get_reading_sessions`.
   - _Stats:_ `get_library_stats` (`GET /statistics/summary`), `get_reading_stats`
-    (`GET /user-statistics/summary`).
+    (`GET /user-statistics/summary`). Plus two **`kind`-dispatch** tools that cover the rest of
+    the analytics surface (one enum arg = one path suffix, like `get_related_books`):
+    `get_library_statistic` (`GET /statistics/{kind}` — 19 distribution/timeline/top-N/gauge
+    charts) and `get_reading_statistic` (`GET /user-statistics/{kind}` — 16 personal
+    reading-activity charts). Both take repeatable `libraryIds`; reading also takes a `days`
+    window plus per-kind extras (`year`/`week` for `session-timeline`, `comparePrevious` for
+    `progress-funnel`, `goalBooks` for `goal-trajectory`). `summary` is intentionally NOT a
+    dispatch `kind` — it keeps its dedicated tool. Bodies are pass-through JSON (the ~35 analytic
+    shapes aren't individually typed); the kind unions live in `types.ts`
+    (`LIBRARY_STAT_KINDS`/`USER_STAT_KINDS`).
+  - _Metadata typeahead:_ `suggest_metadata` (`GET /metadata/{kind}?q=` — authors, series,
+    genres, tags, publishers, languages, narrators, the user's collections; `kind` enum
+    `METADATA_FACET_KINDS`). A case/accent-insensitive **contains** match used to resolve an exact
+    facet name before browsing/filtering; `q` is required and an empty `q` returns `[]` (there is
+    no "list everything" mode). Repeatable `libraryIds` is built by the `statsParams` helper in
+    `bookorbit-client.ts`.
   - **Two pagination conventions:** the browse endpoints use `page`/`size` (helpers `pageParams`/
     `pageQuery` in `bookorbit-client.ts`), but `/books/{id}/sessions` uses `page`/`pageSize` — do
     not unify them. The browse `/books` endpoints (`series`, `authors`, `collections`, `smart-
 scopes`) all return the same rich item, trimmed by `shapeBookListItem` in `tools.ts`; related-
     books arrays are lighter, trimmed by `shapeRelatedBook`. `get_reading_progress` explicitly
     drops the `kobo*` fields.
-  - **Not exposed:** `/metadata/{genres,tags,…}` facet lists — they returned empty on the live
-    instance and their shape is unconfirmed; revisit only with a populated response.
+  - **Metadata facets — resolved:** these earlier "returned empty" because they're **`q`-driven
+    typeahead** (empty/whitespace `q` ⇒ `[]`), not list-everything endpoints. With a search term
+    they work, and are now exposed via `suggest_metadata` (above).
 
 ### Testing note
 

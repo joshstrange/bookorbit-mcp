@@ -145,6 +145,86 @@ test("annotation endpoints hit the right paths with Bearer auth", async () => {
   assert.equal(calls.at(-1), "GET https://ex.com/api/v1/annotations");
 });
 
+test("suggestMetadata maps kind to path and sends q", async () => {
+  const { fetch, calls } = mockFetch(() => json([{ name: "Author Name" }]));
+  const client = new BookOrbitClient({
+    baseUrl: "https://ex.com",
+    token: "t",
+    fetchImpl: fetch,
+  });
+
+  await client.suggestMetadata("authors", "sand");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/metadata/authors?q=sand");
+
+  await client.suggestMetadata("genres", "sci fi");
+  // The space is URL-encoded as "+".
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/metadata/genres?q=sci+fi");
+});
+
+test("getLibraryStatistic builds path, repeats libraryIds, and scopes extra params", async () => {
+  const { fetch, calls } = mockFetch(() => json({ items: [], unknownCount: 0 }));
+  const client = new BookOrbitClient({
+    baseUrl: "https://ex.com",
+    token: "t",
+    fetchImpl: fetch,
+  });
+
+  // No opts → bare path.
+  await client.getLibraryStatistic("top-authors");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/statistics/top-authors");
+
+  // libraryIds is repeated (?libraryIds=1&libraryIds=2).
+  await client.getLibraryStatistic("format-distribution", { libraryIds: [1, 2] });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/statistics/format-distribution?libraryIds=1&libraryIds=2",
+  );
+
+  // granularity/range are forwarded (only meaningful for books-added-over-time).
+  await client.getLibraryStatistic("books-added-over-time", {
+    libraryIds: [3],
+    granularity: "yearly",
+    range: "all-time",
+  });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/statistics/books-added-over-time?libraryIds=3&granularity=yearly&range=all-time",
+  );
+});
+
+test("getUserStatistic forwards days and per-kind extras", async () => {
+  const { fetch, calls } = mockFetch(() => json([]));
+  const client = new BookOrbitClient({
+    baseUrl: "https://ex.com",
+    token: "t",
+    fetchImpl: fetch,
+  });
+
+  await client.getUserStatistic("peak-hours", { days: 30 });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/user-statistics/peak-hours?days=30",
+  );
+
+  await client.getUserStatistic("session-timeline", { year: 2024, week: 1 });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/user-statistics/session-timeline?year=2024&week=1",
+  );
+
+  await client.getUserStatistic("progress-funnel", { days: 90, comparePrevious: true });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/user-statistics/progress-funnel?days=90&comparePrevious=true",
+  );
+
+  await client.getUserStatistic("goal-trajectory", { libraryIds: [1], goalBooks: 24 });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/user-statistics/goal-trajectory?libraryIds=1&goalBooks=24",
+  );
+});
+
 test("encodes internal epub file paths but keeps slashes", async () => {
   const { fetch, calls } = mockFetch(
     () => new Response("<html>ok</html>", { status: 200 }),

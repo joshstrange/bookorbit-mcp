@@ -4,6 +4,7 @@ import type { BookOrbitClient } from "./bookorbit-client.js";
 import { BookOrbitError } from "./bookorbit-client.js";
 import type { BookService } from "./book-service.js";
 import type { Annotation, BookListItem, RelatedBook } from "./types.js";
+import { LIBRARY_STAT_KINDS, METADATA_FACET_KINDS, USER_STAT_KINDS } from "./types.js";
 
 /** Default cap on chapter text returned per call (~6k tokens). */
 const DEFAULT_MAX_CHARS = 24_000;
@@ -428,6 +429,33 @@ export function registerTools(
   );
 
   server.registerTool(
+    "suggest_metadata",
+    {
+      title: "Suggest metadata values (typeahead)",
+      description:
+        "Typeahead lookup over the library's metadata facets — use it to resolve the exact " +
+        "spelling of a name before browsing/filtering (e.g. find the real author or series " +
+        "name to feed elsewhere). Pick a 'kind': authors, series, publishers, languages, " +
+        "narrators, or the user's own collections (each returns { name }), or genres / tags " +
+        "(which also return a filterable { id, name }). Matching is a case- and " +
+        "accent-insensitive 'contains' match on 'q', capped at ~15 results (20 for " +
+        "collections). 'q' is required — an empty/whitespace 'q' returns [].",
+      inputSchema: {
+        kind: z.enum(METADATA_FACET_KINDS).describe("Which metadata facet to search."),
+        q: z
+          .string()
+          .min(1)
+          .describe("Search term (contains-match). Required; empty returns []."),
+      },
+    },
+    async ({ kind, q }) =>
+      guard(async () => {
+        const matches = await client.suggestMetadata(kind, q);
+        return ok({ kind, q, matches });
+      }),
+  );
+
+  server.registerTool(
     "list_series",
     {
       title: "List series",
@@ -838,6 +866,127 @@ export function registerTools(
     async () =>
       guard(async () => {
         return ok(await client.getUserStatisticsSummary());
+      }),
+  );
+
+  server.registerTool(
+    "get_library_statistic",
+    {
+      title: "Get a library statistic",
+      description:
+        "Get one pre-aggregated, library-wide statistics chart (not the user's personal " +
+        "reading — use get_reading_statistic for that; for headline totals use " +
+        "get_library_stats). Pick a 'kind':\n" +
+        "- Distributions: format-distribution, genre-distribution, language-distribution, " +
+        "publication-decade, page-count-distribution, storage-by-format.\n" +
+        "- Top-N & rankings: top-authors, top-series, largest-books.\n" +
+        "- Timelines: books-added-over-time, publication-year-timeline, format-share-over-time.\n" +
+        "- Relationships: genre-cooccurrence, acquisition-lag-scatter.\n" +
+        "- Metadata health: metadata-completeness, library-metadata-completeness, " +
+        "metadata-score-distribution, metadata-freshness-gauge, library-integrity-gauge.\n" +
+        "Optionally restrict to one or more libraryIds. 'granularity' and 'range' apply only " +
+        "to books-added-over-time.",
+      inputSchema: {
+        kind: z.enum(LIBRARY_STAT_KINDS).describe("Which library statistic to fetch."),
+        libraryIds: z
+          .array(z.number().int())
+          .optional()
+          .describe(
+            "Restrict the aggregation to these library ids (default: all visible).",
+          ),
+        granularity: z
+          .enum(["monthly", "yearly"])
+          .optional()
+          .describe("Only for books-added-over-time. Default monthly."),
+        range: z
+          .enum(["last-year", "last-5-years", "all-time"])
+          .optional()
+          .describe("Only for books-added-over-time. Default all-time."),
+      },
+    },
+    async ({ kind, libraryIds, granularity, range }) =>
+      guard(async () => {
+        const data = await client.getLibraryStatistic(kind, {
+          libraryIds,
+          granularity,
+          range,
+        });
+        return ok({ kind, data });
+      }),
+  );
+
+  server.registerTool(
+    "get_reading_statistic",
+    {
+      title: "Get a reading statistic",
+      description:
+        "Get one pre-aggregated chart of the signed-in user's personal reading activity " +
+        "(derived from reading sessions + progress; for library-wide analytics use " +
+        "get_library_statistic). Pick a 'kind':\n" +
+        "- Activity over time: daily-reading, reading-heatmap, completion-timeline.\n" +
+        "- When they read: peak-hours (by hour), favorite-days (by weekday), " +
+        "session-timeline (one ISO week), session-archetypes.\n" +
+        "- Pace & finishing: reading-pace, completion-latency, completion-race, " +
+        "reading-survival, progress-funnel, goal-trajectory.\n" +
+        "- Breakdowns: genre-reading-time, author-genre-chord, reading-source-distribution.\n" +
+        "Optionally restrict to libraryIds. 'days' is a trailing look-back window (ignored by " +
+        "session-timeline). Per-kind extras: year/week (session-timeline), comparePrevious " +
+        "(progress-funnel), goalBooks (goal-trajectory).",
+      inputSchema: {
+        kind: z.enum(USER_STAT_KINDS).describe("Which reading statistic to fetch."),
+        libraryIds: z
+          .array(z.number().int())
+          .optional()
+          .describe("Restrict to these library ids (default: all visible)."),
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(3650)
+          .optional()
+          .describe(
+            "Trailing look-back window in days. Per-kind default; ignored by session-timeline.",
+          ),
+        year: z
+          .number()
+          .int()
+          .min(1970)
+          .max(2100)
+          .optional()
+          .describe("Only for session-timeline: ISO week-year. Default current."),
+        week: z
+          .number()
+          .int()
+          .min(1)
+          .max(53)
+          .optional()
+          .describe("Only for session-timeline: ISO week number. Default current."),
+        comparePrevious: z
+          .boolean()
+          .optional()
+          .describe(
+            "Only for progress-funnel: also compute the previous window. Default false.",
+          ),
+        goalBooks: z
+          .number()
+          .int()
+          .min(1)
+          .max(240)
+          .optional()
+          .describe("Only for goal-trajectory: annual books goal. Default 12."),
+      },
+    },
+    async ({ kind, libraryIds, days, year, week, comparePrevious, goalBooks }) =>
+      guard(async () => {
+        const data = await client.getUserStatistic(kind, {
+          libraryIds,
+          days,
+          year,
+          week,
+          comparePrevious,
+          goalBooks,
+        });
+        return ok({ kind, data });
       }),
   );
 
