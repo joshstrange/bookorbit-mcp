@@ -1,0 +1,124 @@
+{
+  "containerPath": "OPS/content.opf",
+  "rootPath": "text/",
+  "spine": [
+    {
+      "idref": "cover",
+      "href": "text/cover.xhtml",
+      "mediaType": "application/xhtml+xml",
+      "linear": true
+    },
+    {
+      "idref": "title",
+      "href": "text/title.xhtml",
+      "mediaType": "application/xhtml+xml",
+      "linear": true
+    },
+    {
+      "idref": "part1",
+      "href": "text/part1.xhtml",
+      "mediaType": "application/xhtml+xml",
+      "linear": true
+    },
+    {
+      "idref": "bundle",
+      "href": "text/bundle.xhtml",
+      "mediaType": "application/xhtml+xml",
+      "linear": true
+    },
+    {
+      "idref": "xhtml_099_appendix",
+      "href": "text/appendix.xhtml",
+      "mediaType": "application/xhtml+xml",
+      "linear": true
+    }
+  ],
+  "manifest": [
+    {
+      "id": "css",
+      "href": "text/styles.css",
+      "mediaType": "text/css",
+      "size": 100
+    }
+  ],
+  "optionalFiles": [],
+  "toc": {
+    "label": "Table of Contents",
+    "children": [
+      {
+        "label": "Cover",
+        "href": "text/cover.xhtml"
+      },
+      {
+        "label": "Title Page",
+        "href": "text/title.xhtml"
+      },
+      {
+        "label": "Part One",
+        "href": "text/part1.xhtml",
+        "children": [
+          {
+            "label": "Arrival",
+            "href": "text/bundle.xhtml"
+          },
+          {
+            "label": "The Signal",
+            "href": "text/bundle.xhtml#ch002"
+          },
+          {
+            "label": "The Crossing",
+            "href": "text/bundle.xhtml#ch003"
+          },
+          {
+            "label": "Deep Water",
+            "href": "text/bundle.xhtml#ch004"
+          },
+          {
+            "label": "The Watcher",
+            "href": "text/bundle.xhtml#ch005"
+          },
+          {
+            "label": "Nightfall",
+            "href": "text/bundle.xhtml#ch006"
+          },
+          {
+            "label": "The Return",
+            "href": "text/bundle.xhtml#ch007"
+          },
+          {
+            "label": "Broken Ground",
+            "href": "text/bundle.xhtml#ch008"
+          },
+          {
+            "label": "The Message",
+            "href": "text/bundle.xhtml#ch009"
+          },
+          {
+            "label": "Old Roads",
+            "href": "text/bundle.xhtml#ch010"
+          },
+          {
+            "label": "The Keeper",
+            "href": "text/bundle.xhtml#ch011"
+          },
+          {
+            "label": "Last Light",
+            "href": "text/bundle.xhtml#ch012"
+          },
+          {
+            "label": "The Threshold",
+            "href": "text/bundle.xhtml#ch013"
+          }
+        ]
+      }
+    ]
+  },
+  "metadata": {
+    "title": "Sample Book",
+    "creator": "Test Author",
+    "language": "English",
+    "publisher": "Test Press",
+    "description": "A synthetic fixture used for tests. Not a real book."
+  },
+  "coverPath": "text/cover.xhtml"
+}

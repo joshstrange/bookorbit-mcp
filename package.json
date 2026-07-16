@@ -1,0 +1,53 @@
+{
+  "name": "bookorbit-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that exposes the text of ebooks managed by Book Orbit to LLMs, without overwhelming them.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Josh Strange",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joshstrange/bookorbit-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "bookorbit",
+    "epub",
+    "ebooks",
+    "llm"
+  ],
+  "bin": {
+    "bookorbit-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "node --import tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "node-html-parser": "^7.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.64.0"
+  }
+}
