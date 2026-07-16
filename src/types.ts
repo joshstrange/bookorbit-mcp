@@ -348,6 +348,43 @@ export const USER_STAT_KINDS = [
 ] as const;
 export type UserStatKind = (typeof USER_STAT_KINDS)[number];
 
+/**
+ * Dashboard "headline card" widgets (GET /dashboard/widgets/{kind}). The value
+ * doubles as the URL path segment. `currently-reading` is excluded — it has its
+ * own `list_currently_reading` tool. These are the compact, pre-computed siblings
+ * of the richer `get_reading_statistic` charts.
+ */
+export const DASHBOARD_WIDGET_KINDS = [
+  "reading-streak",
+  "reading-goal",
+  "monthly-challenge",
+  "reading-rhythm",
+  "reading-dna",
+  "diversity-score",
+  "year-projection",
+  "library-overview",
+  "highlight-of-the-day",
+  "long-wait",
+  "neglected-gems",
+] as const;
+export type DashboardWidgetKind = (typeof DASHBOARD_WIDGET_KINDS)[number];
+
+/**
+ * Curated dashboard book shelves (GET /dashboard/scrollers/{type}). The value
+ * doubles as the URL path segment. `smart-scope` additionally requires a
+ * `smartScopeId`; the rest take no required params.
+ */
+export const BOOK_SHELF_TYPES = [
+  "recently-added",
+  "continue-reading",
+  "continue-listening",
+  "want-to-read",
+  "up-next-in-series",
+  "random",
+  "smart-scope",
+] as const;
+export type BookShelfType = (typeof BOOK_SHELF_TYPES)[number];
+
 /** GET /libraries — the per-library config blob (only a few fields are surfaced). */
 export interface Library {
   id: number;

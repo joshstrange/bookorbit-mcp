@@ -4,7 +4,13 @@ import type { BookOrbitClient } from "./bookorbit-client.js";
 import { BookOrbitError } from "./bookorbit-client.js";
 import type { BookService } from "./book-service.js";
 import type { Annotation, BookListItem, RelatedBook } from "./types.js";
-import { LIBRARY_STAT_KINDS, METADATA_FACET_KINDS, USER_STAT_KINDS } from "./types.js";
+import {
+  BOOK_SHELF_TYPES,
+  DASHBOARD_WIDGET_KINDS,
+  LIBRARY_STAT_KINDS,
+  METADATA_FACET_KINDS,
+  USER_STAT_KINDS,
+} from "./types.js";
 
 /** Default cap on chapter text returned per call (~6k tokens). */
 const DEFAULT_MAX_CHARS = 24_000;
@@ -66,12 +72,23 @@ function shapeAnnotation(a: Annotation) {
 }
 
 type ToolResult = {
-  content: Array<{ type: "text"; text: string }>;
+  content: Array<
+    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+  >;
   isError?: boolean;
 };
 
 function ok(data: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+}
+
+/** Wrap raw image bytes as an MCP image content block (base64). */
+function okImage(img: { data: Buffer; contentType: string }): ToolResult {
+  return {
+    content: [
+      { type: "image", data: img.data.toString("base64"), mimeType: img.contentType },
+    ],
+  };
 }
 
 function fail(message: string): ToolResult {
@@ -1020,5 +1037,159 @@ export function registerTools(
         );
         return ok({ count: withStats.length, libraries: withStats });
       }),
+  );
+
+  server.registerTool(
+    "get_dashboard_widget",
+    {
+      title: "Get a dashboard widget",
+      description:
+        "Get one pre-computed dashboard 'headline card' — the compact, at-a-glance sibling of " +
+        "the richer get_reading_statistic charts. Pick a 'kind':\n" +
+        "- Goals & momentum: reading-streak, reading-goal, year-projection, monthly-challenge.\n" +
+        "- Reading profile: reading-rhythm (14-day series), reading-dna, diversity-score.\n" +
+        "- Nudges / recommendations: neglected-gems (highly-rated but unread), long-wait " +
+        "(longest-unread), highlight-of-the-day (one of the user's own annotations).\n" +
+        "- Overview: library-overview (aggregate totals across all libraries).\n" +
+        "(For the 'currently reading' card use list_currently_reading.)",
+      inputSchema: {
+        kind: z.enum(DASHBOARD_WIDGET_KINDS).describe("Which dashboard widget to fetch."),
+      },
+    },
+    async ({ kind }) =>
+      guard(async () => {
+        const data = await client.getDashboardWidget(kind);
+        return ok({ kind, data });
+      }),
+  );
+
+  server.registerTool(
+    "get_book_shelf",
+    {
+      title: "Get a book shelf",
+      description:
+        "Get a curated shelf of books (full book cards) by 'type': recently-added, " +
+        "continue-reading, continue-listening (audiobooks), want-to-read, up-next-in-series, " +
+        "random, or smart-scope. Use this to surface reading suggestions and lists no other " +
+        "browse tool reaches. 'smart-scope' requires a smartScopeId (from list_smart_scopes).",
+      inputSchema: {
+        type: z.enum(BOOK_SHELF_TYPES).describe("Which shelf to fetch."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe("Max books (default 20)."),
+        smartScopeId: z
+          .number()
+          .int()
+          .optional()
+          .describe("Required only when type is 'smart-scope' (from list_smart_scopes)."),
+      },
+    },
+    async ({ type, limit, smartScopeId }) =>
+      guard(async () => {
+        if (type === "smart-scope" && smartScopeId == null) {
+          return fail(
+            "get_book_shelf: type 'smart-scope' requires a smartScopeId (get one from list_smart_scopes).",
+          );
+        }
+        const books = await client.getBookShelf(type, { limit, smartScopeId });
+        return ok({ type, count: books.length, books: books.map(shapeBookListItem) });
+      }),
+  );
+
+  server.registerTool(
+    "get_collection",
+    {
+      title: "Get collection detail",
+      description:
+        "Get one collection's detail (name, description, icon, book count) by collectionId. " +
+        "Companion to get_collection_books; use list_collections to find the id.",
+      inputSchema: {
+        collectionId: z
+          .number()
+          .int()
+          .describe("The collection's id (from list_collections)."),
+      },
+    },
+    async ({ collectionId }) =>
+      guard(async () => {
+        return ok(await client.getCollection(collectionId));
+      }),
+  );
+
+  server.registerTool(
+    "search_author_metadata",
+    {
+      title: "Search external author metadata",
+      description:
+        "Search external metadata providers for author-biography candidates by name. This is " +
+        "EXTERNAL enrichment data (bios, images, provider ids) — NOT your library's authors " +
+        "(use search_books / list_authors for those). Useful for 'tell me about this author'.",
+      inputSchema: {
+        q: z.string().min(1).describe("Author name to search for."),
+        region: z.string().optional().describe("Optional region/locale hint."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(25)
+          .optional()
+          .describe("Max candidates (default provider-side)."),
+        providers: z
+          .string()
+          .optional()
+          .describe("Optional comma-separated provider keys (default: all)."),
+      },
+    },
+    async ({ q, region, limit, providers }) =>
+      guard(async () => {
+        const candidates = await client.searchAuthorMetadata(q, {
+          region,
+          limit,
+          providers,
+        });
+        return ok({ q, candidates });
+      }),
+  );
+
+  server.registerTool(
+    "get_book_cover",
+    {
+      title: "Get book cover image",
+      description:
+        "Get a book's cover image bytes (returned as an image, not text). Use size 'thumbnail' " +
+        "for a small image or 'full' for the full-size cover. Errors if the book has no cover.",
+      inputSchema: {
+        bookId: z.number().int().describe("The book's id (from search_books)."),
+        size: z
+          .enum(["full", "thumbnail"])
+          .optional()
+          .describe("Image size (default 'full')."),
+      },
+    },
+    async ({ bookId, size }) =>
+      guard(async () => okImage(await client.getBookCover(bookId, size ?? "full"))),
+  );
+
+  server.registerTool(
+    "get_author_image",
+    {
+      title: "Get author image",
+      description:
+        "Get an author's photo bytes (returned as an image, not text). Use size 'thumbnail' " +
+        "for a small image or 'full' for the full-size photo. Errors if the author has no image.",
+      inputSchema: {
+        authorId: z.number().int().describe("The author's id (from list_authors)."),
+        size: z
+          .enum(["full", "thumbnail"])
+          .optional()
+          .describe("Image size (default 'full')."),
+      },
+    },
+    async ({ authorId, size }) =>
+      guard(async () => okImage(await client.getAuthorImage(authorId, size ?? "full"))),
   );
 }

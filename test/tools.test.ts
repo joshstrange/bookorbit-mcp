@@ -23,7 +23,7 @@ const chapterXhtml = readFileSync(
 );
 
 type Handler = (args: Record<string, unknown>) => Promise<{
-  content: Array<{ type: string; text: string }>;
+  content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
   isError?: boolean;
 }>;
 
@@ -39,7 +39,10 @@ function fakeServer() {
     const h = handlers.get(name);
     assert.ok(h, `tool ${name} not registered`);
     const res = await h(args);
-    return { res, data: res.isError ? null : JSON.parse(res.content[0].text) };
+    const first = res.content[0];
+    const data =
+      res.isError || first?.type !== "text" ? null : JSON.parse(first.text as string);
+    return { res, data };
   };
   return { server, call };
 }
@@ -367,6 +370,31 @@ function stubClient() {
     async getUserStatistic(kind: string, opts?: unknown) {
       return { echoedKind: kind, echoedOpts: opts ?? null };
     },
+    async getDashboardWidget(kind: string) {
+      return { echoedKind: kind, currentStreak: 5 };
+    },
+    async getBookShelf(_type: string, _opts?: { limit?: number; smartScopeId?: number }) {
+      return [sampleBookItem()];
+    },
+    async getCollection(id: number) {
+      return { id, name: "Favorites", description: "d", icon: "star", bookCount: 4 };
+    },
+    async searchAuthorMetadata(q: string, opts?: unknown) {
+      return {
+        echoedQ: q,
+        echoedOpts: opts ?? null,
+        candidates: [{ name: "J.R.R. Tolkien" }],
+      };
+    },
+    async getBookCover(_bookId: number, size: string) {
+      return {
+        data: Buffer.from(size === "thumbnail" ? [1, 2] : [1, 2, 3]),
+        contentType: "image/jpeg",
+      };
+    },
+    async getAuthorImage(_authorId: number, _size: string) {
+      return { data: Buffer.from([4, 5]), contentType: "image/png" };
+    },
   } as unknown as BookOrbitClient;
   return client;
 }
@@ -660,6 +688,65 @@ test("get_reading_statistic forwards per-kind extras", async () => {
   assert.equal(data.kind, "goal-trajectory");
   assert.equal(data.data.echoedOpts.days, 365);
   assert.equal(data.data.echoedOpts.goalBooks, 24);
+});
+
+test("get_dashboard_widget forwards kind and wraps the passthrough", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_dashboard_widget", { kind: "reading-streak" });
+  assert.equal(data.kind, "reading-streak");
+  assert.equal(data.data.echoedKind, "reading-streak");
+  assert.equal(data.data.currentStreak, 5);
+});
+
+test("get_book_shelf shapes items and guards smart-scope without an id", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_book_shelf", { type: "recently-added" });
+  assert.equal(data.type, "recently-added");
+  assert.equal(data.count, 1);
+  assert.equal(data.books[0].bookId, 245);
+  assert.equal(data.books[0].hasEpub, true);
+  assert.ok(!("files" in data.books[0]));
+
+  const bad = await call("get_book_shelf", { type: "smart-scope" });
+  assert.equal(bad.res.isError, true);
+  assert.match(bad.res.content[0].text, /smartScopeId/);
+});
+
+test("get_collection passes the collection through", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_collection", { collectionId: 7 });
+  assert.equal(data.id, 7);
+  assert.equal(data.name, "Favorites");
+});
+
+test("search_author_metadata forwards q and passes candidates through", async () => {
+  const { call } = await setup();
+  const { data } = await call("search_author_metadata", { q: "tolkien", limit: 5 });
+  assert.equal(data.q, "tolkien");
+  assert.equal(data.candidates.echoedQ, "tolkien");
+  assert.equal(data.candidates.echoedOpts.limit, 5);
+  assert.equal(data.candidates.candidates[0].name, "J.R.R. Tolkien");
+});
+
+test("get_book_cover returns an image content block", async () => {
+  const { call } = await setup();
+  const { res, data } = await call("get_book_cover", { bookId: 327, size: "thumbnail" });
+  assert.equal(data, null); // not text
+  assert.equal(res.isError, undefined);
+  const block = res.content[0];
+  assert.equal(block.type, "image");
+  assert.equal(block.mimeType, "image/jpeg");
+  // base64 of [1,2] bytes.
+  assert.equal(block.data, Buffer.from([1, 2]).toString("base64"));
+});
+
+test("get_author_image returns an image content block", async () => {
+  const { call } = await setup();
+  const { res } = await call("get_author_image", { authorId: 192 });
+  const block = res.content[0];
+  assert.equal(block.type, "image");
+  assert.equal(block.mimeType, "image/png");
+  assert.equal(block.data, Buffer.from([4, 5]).toString("base64"));
 });
 
 test("list_libraries trims config and attaches per-library stats", async () => {

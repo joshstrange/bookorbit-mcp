@@ -6,7 +6,9 @@ import type {
   BookDetail,
   BookListItem,
   BookSearchResult,
+  BookShelfType,
   CurrentlyReading,
+  DashboardWidgetKind,
   EpubInfo,
   Library,
   LibraryStats,
@@ -293,6 +295,74 @@ export class BookOrbitClient {
     if (opts?.goalBooks != null) params.set("goalBooks", String(opts.goalBooks));
     const qs = params.toString();
     return this.getJson<unknown>(`/user-statistics/${kind}${qs ? `?${qs}` : ""}`);
+  }
+
+  /** One dashboard "headline card" widget (streak, goal, projection, …). */
+  async getDashboardWidget(kind: DashboardWidgetKind): Promise<unknown> {
+    return this.getJson<unknown>(`/dashboard/widgets/${kind}`);
+  }
+
+  /**
+   * One curated dashboard book shelf (recently-added, want-to-read, up-next-in-
+   * series, …). `smart-scope` requires `smartScopeId`. Returns a bare book-card array.
+   */
+  async getBookShelf(
+    type: BookShelfType,
+    opts?: { limit?: number; smartScopeId?: number },
+  ): Promise<BookListItem[]> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.smartScopeId != null) params.set("smartScopeId", String(opts.smartScopeId));
+    const qs = params.toString();
+    return this.getJson<BookListItem[]>(
+      `/dashboard/scrollers/${type}${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  /** One collection's detail (companion to getCollectionBooks). */
+  async getCollection(id: number): Promise<unknown> {
+    return this.getJson<unknown>(`/collections/${id}`);
+  }
+
+  /** Search external providers for author-metadata candidates (bio enrichment). */
+  async searchAuthorMetadata(
+    q: string,
+    opts?: { region?: string; limit?: number; providers?: string },
+  ): Promise<unknown> {
+    const params = new URLSearchParams({ q });
+    if (opts?.region != null) params.set("region", opts.region);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.providers != null) params.set("providers", opts.providers);
+    return this.getJson<unknown>(`/authors/metadata/search?${params}`);
+  }
+
+  /** Fetch a raw image (cover/thumbnail) as bytes plus its content type. */
+  async getImage(path: string): Promise<{ data: Buffer; contentType: string }> {
+    const res = await this.authFetch(path);
+    return {
+      data: Buffer.from(await res.arrayBuffer()),
+      contentType: res.headers.get("content-type") ?? "application/octet-stream",
+    };
+  }
+
+  /** A book's cover image (full-size or thumbnail). */
+  async getBookCover(
+    bookId: number,
+    size: "full" | "thumbnail",
+  ): Promise<{ data: Buffer; contentType: string }> {
+    return this.getImage(
+      `/books/${bookId}/${size === "thumbnail" ? "thumbnail" : "cover"}`,
+    );
+  }
+
+  /** An author's image (full-size or thumbnail). */
+  async getAuthorImage(
+    authorId: number,
+    size: "full" | "thumbnail",
+  ): Promise<{ data: Buffer; contentType: string }> {
+    return this.getImage(
+      `/authors/${authorId}/${size === "thumbnail" ? "thumbnail" : "image"}`,
+    );
   }
 
   /** All libraries (the raw per-library config blob). */

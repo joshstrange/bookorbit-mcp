@@ -225,6 +225,69 @@ test("getUserStatistic forwards days and per-kind extras", async () => {
   );
 });
 
+test("dashboard, shelf, collection and author-metadata build the right paths", async () => {
+  const { fetch, calls } = mockFetch(() => json([]));
+  const client = new BookOrbitClient({
+    baseUrl: "https://ex.com",
+    token: "t",
+    fetchImpl: fetch,
+  });
+
+  await client.getDashboardWidget("reading-streak");
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/dashboard/widgets/reading-streak",
+  );
+
+  // No opts → bare path.
+  await client.getBookShelf("recently-added");
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/dashboard/scrollers/recently-added",
+  );
+
+  await client.getBookShelf("smart-scope", { limit: 10, smartScopeId: 3 });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/dashboard/scrollers/smart-scope?limit=10&smartScopeId=3",
+  );
+
+  await client.getCollection(7);
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/collections/7");
+
+  await client.searchAuthorMetadata("tolkien", { limit: 5 });
+  assert.equal(
+    calls.at(-1),
+    "GET https://ex.com/api/v1/authors/metadata/search?q=tolkien&limit=5",
+  );
+});
+
+test("getImage returns bytes + content type and maps cover/thumbnail paths", async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  const { fetch, calls } = mockFetch(
+    () => new Response(png, { status: 200, headers: { "content-type": "image/png" } }),
+  );
+  const client = new BookOrbitClient({
+    baseUrl: "https://ex.com",
+    token: "t",
+    fetchImpl: fetch,
+  });
+
+  const cover = await client.getBookCover(327, "full");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/books/327/cover");
+  assert.equal(cover.contentType, "image/png");
+  assert.deepEqual([...cover.data], [...png]);
+
+  await client.getBookCover(327, "thumbnail");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/books/327/thumbnail");
+
+  await client.getAuthorImage(192, "full");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/authors/192/image");
+
+  await client.getAuthorImage(192, "thumbnail");
+  assert.equal(calls.at(-1), "GET https://ex.com/api/v1/authors/192/thumbnail");
+});
+
 test("encodes internal epub file paths but keeps slashes", async () => {
   const { fetch, calls } = mockFetch(
     () => new Response("<html>ok</html>", { status: 200 }),

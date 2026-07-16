@@ -161,4 +161,48 @@ const goal = (await client.getUserStatistic("goal-trajectory", { goalBooks: 24 }
 };
 console.log(`   goal-trajectory (24/yr) → ${goal.points.length} monthly points`);
 
+console.log("\n13) dashboard widgets (get_dashboard_widget)");
+const streak = (await client.getDashboardWidget("reading-streak")) as {
+  currentStreak?: number;
+  longestStreak?: number;
+};
+console.log(
+  `   reading-streak → current ${streak.currentStreak ?? "?"}, longest ${streak.longestStreak ?? "?"}`,
+);
+const overview = (await client.getDashboardWidget("library-overview")) as {
+  totalBooks?: number;
+};
+console.log(`   library-overview → ${overview.totalBooks ?? "?"} books`);
+
+console.log("\n14) book shelf (get_book_shelf)");
+const shelf = await client.getBookShelf("recently-added", { limit: 5 });
+console.log(
+  `   recently-added → ${shelf.length} book(s)` +
+    (shelf[0] ? `, newest: "${shelf[0].title}"` : ""),
+);
+
+console.log("\n15) collection detail + author metadata search");
+if (collections[0]) {
+  const col = (await client.getCollection(collections[0].id)) as { name?: string };
+  console.log(`   collection[${collections[0].id}] → "${col.name ?? "?"}"`);
+} else {
+  console.log("   (no collections to fetch)");
+}
+const authorHits = (await client.searchAuthorMetadata("tolkien", {
+  limit: 3,
+})) as unknown[];
+console.log(
+  `   search_author_metadata("tolkien") → ${Array.isArray(authorHits) ? authorHits.length : "?"} candidate(s)`,
+);
+
+console.log("\n16) cover image (get_book_cover)");
+try {
+  const cover = await client.getBookCover(book.id, "thumbnail");
+  console.log(
+    `   book ${book.id} thumbnail → ${cover.data.length} bytes, ${cover.contentType}`,
+  );
+} catch (err) {
+  console.log(`   book ${book.id} thumbnail → ${(err as Error).message}`);
+}
+
 console.log("\nSMOKE OK");

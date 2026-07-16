@@ -96,5 +96,37 @@ const readStat = await parse(
 );
 console.log(`get_reading_statistic(peak-hours) -> ${readStat.data.length} hours`);
 
+const widget = await parse(
+  await client.callTool({
+    name: "get_dashboard_widget",
+    arguments: { kind: "library-overview" },
+  }),
+);
+console.log(
+  `get_dashboard_widget(library-overview) -> ${widget.data.totalBooks ?? "?"} books`,
+);
+
+const shelf = await parse(
+  await client.callTool({
+    name: "get_book_shelf",
+    arguments: { type: "recently-added", limit: 5 },
+  }),
+);
+console.log(`get_book_shelf(recently-added) -> ${shelf.count} book(s)`);
+
+// Image tool: verify an image content block comes back over the protocol.
+const coverRes: any = await client.callTool({
+  name: "get_book_cover",
+  arguments: { bookId: books[0].bookId, size: "thumbnail" },
+});
+const coverBlock = coverRes.content?.[0];
+if (coverBlock?.type === "image") {
+  console.log(
+    `get_book_cover(thumbnail) -> image ${coverBlock.mimeType}, ${coverBlock.data.length} b64 chars`,
+  );
+} else {
+  console.log(`get_book_cover(thumbnail) -> ${coverBlock?.text ?? "(no cover)"}`);
+}
+
 await client.close();
 console.log("MCP CHECK OK");

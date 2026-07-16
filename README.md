@@ -42,30 +42,33 @@ All tools are **read-only**.
 
 **Discovery & browse**
 
-| Tool                                               | What it does                                                                                                  |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `get_related_books(bookId, kind)`                  | `similar` / `same_series` / `same_author` books for a book.                                                   |
-| `list_series(page?, size?)`                        | Library's series with book/read counts.                                                                       |
-| `get_series_books(seriesId, page?, size?)`         | Books in a series, in order.                                                                                  |
-| `list_authors(page?, size?)`                       | Library's authors with book counts.                                                                           |
-| `get_author(authorId)`                             | One author, including their bio.                                                                              |
-| `get_author_books(authorId, page?, size?)`         | Books by an author.                                                                                           |
-| `list_collections()` / `get_collection_books(…)`   | User collections and their books.                                                                             |
-| `list_smart_scopes()` / `get_smart_scope_books(…)` | Saved dynamic filters and the books they match.                                                               |
-| `list_libraries()`                                 | Libraries with per-library book/size/format stats.                                                            |
-| `suggest_metadata(kind, q)`                        | Typeahead over authors/series/genres/tags/publishers/languages/narrators/collections — resolve an exact name. |
+| Tool                                                                    | What it does                                                                                                       |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `get_related_books(bookId, kind)`                                       | `similar` / `same_series` / `same_author` books for a book.                                                        |
+| `list_series(page?, size?)`                                             | Library's series with book/read counts.                                                                            |
+| `get_series_books(seriesId, page?, size?)`                              | Books in a series, in order.                                                                                       |
+| `list_authors(page?, size?)`                                            | Library's authors with book counts.                                                                                |
+| `get_author(authorId)`                                                  | One author, including their bio.                                                                                   |
+| `get_author_books(authorId, page?, size?)`                              | Books by an author.                                                                                                |
+| `list_collections()` / `get_collection(id)` / `get_collection_books(…)` | User collections, one collection's detail, and its books.                                                          |
+| `list_smart_scopes()` / `get_smart_scope_books(…)`                      | Saved dynamic filters and the books they match.                                                                    |
+| `list_libraries()`                                                      | Libraries with per-library book/size/format stats.                                                                 |
+| `suggest_metadata(kind, q)`                                             | Typeahead over authors/series/genres/tags/publishers/languages/narrators/collections — resolve an exact name.      |
+| `get_book_shelf(type, limit?)`                                          | A curated shelf: recently-added, want-to-read, up-next-in-series, continue-reading/listening, random, smart-scope. |
+| `search_author_metadata(q, …)`                                          | External provider author-bio candidates (enrichment, not your library).                                            |
 
 **Reading state & stats**
 
-| Tool                                       | What it does                                                                                           |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `get_reading_progress(bookId)`             | Per-file progress (+ audiobook progress) for a book.                                                   |
-| `list_currently_reading()`                 | Books you're reading now, with progress.                                                               |
-| `get_reading_sessions(bookId, page?, …)`   | Reading-session history + aggregate stats for a book.                                                  |
-| `get_library_stats()`                      | Library-wide totals (books/authors/series/storage/…).                                                  |
-| `get_reading_stats()`                      | Your personal reading totals (started/completed/…).                                                    |
-| `get_library_statistic(kind, libraryIds?)` | One library-wide chart: distributions, top-authors/series, timelines, metadata-health gauges.          |
-| `get_reading_statistic(kind, days?, …)`    | One personal reading chart: peak-hours, favorite-days, heatmap, completion-latency, goal-trajectory, … |
+| Tool                                       | What it does                                                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `get_reading_progress(bookId)`             | Per-file progress (+ audiobook progress) for a book.                                                    |
+| `list_currently_reading()`                 | Books you're reading now, with progress.                                                                |
+| `get_reading_sessions(bookId, page?, …)`   | Reading-session history + aggregate stats for a book.                                                   |
+| `get_library_stats()`                      | Library-wide totals (books/authors/series/storage/…).                                                   |
+| `get_reading_stats()`                      | Your personal reading totals (started/completed/…).                                                     |
+| `get_library_statistic(kind, libraryIds?)` | One library-wide chart: distributions, top-authors/series, timelines, metadata-health gauges.           |
+| `get_reading_statistic(kind, days?, …)`    | One personal reading chart: peak-hours, favorite-days, heatmap, completion-latency, goal-trajectory, …  |
+| `get_dashboard_widget(kind)`               | One "headline card": reading-streak, reading-goal, year-projection, neglected-gems, library-overview, … |
 
 **Annotations** (your own highlights & notes)
 
@@ -74,6 +77,13 @@ All tools are **read-only**.
 | `list_annotations(page?, pageSize?, bookId?)` | All highlights/notes across the library, paginated. |
 | `list_annotated_books()`                      | Which books have annotations, with counts.          |
 | `get_annotations(bookId)`                     | One book's highlights/notes, in chapter order.      |
+
+**Images** (returned as image content, not text)
+
+| Tool                                | What it does                                  |
+| ----------------------------------- | --------------------------------------------- |
+| `get_book_cover(bookId, size?)`     | A book's cover image (`full` or `thumbnail`). |
+| `get_author_image(authorId, size?)` | An author's photo (`full` or `thumbnail`).    |
 
 **Typical flow:** `search_books` → `list_chapters` → `get_chapter` /
 `search_in_book`.

@@ -102,9 +102,10 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   tools:
   - _Related & browse:_ `get_related_books` (`GET /books/{id}/recommendations|series-books|
 author-books` via a `kind` arg), `list_series` / `get_series_books`, `list_authors` /
-    `get_author` / `get_author_books`, `list_collections` / `get_collection_books`,
-    `list_smart_scopes` / `get_smart_scope_books`, `list_libraries` (enriched with
-    `GET /libraries/{id}/stats`).
+    `get_author` / `get_author_books`, `list_collections` / `get_collection` /
+    `get_collection_books`, `list_smart_scopes` / `get_smart_scope_books`, `list_libraries`
+    (enriched with `GET /libraries/{id}/stats`), `search_author_metadata`
+    (`GET /authors/metadata/search` — EXTERNAL provider bios, not library data).
   - _Reading state:_ `get_reading_progress` (`GET /books/{id}/progress` + best-effort
     `/audio-progress`), `list_currently_reading`, `get_reading_sessions`.
   - _Stats:_ `get_library_stats` (`GET /statistics/summary`), `get_reading_stats`
@@ -124,6 +125,21 @@ author-books` via a `kind` arg), `list_series` / `get_series_books`, `list_autho
     facet name before browsing/filtering; `q` is required and an empty `q` returns `[]` (there is
     no "list everything" mode). Repeatable `libraryIds` is built by the `statsParams` helper in
     `bookorbit-client.ts`.
+  - _Dashboard & shelves:_ `get_dashboard_widget` (`GET /dashboard/widgets/{kind}` — 11 compact
+    "headline card" widgets: reading-streak/goal/year-projection, reading-dna/diversity-score,
+    neglected-gems/long-wait/highlight-of-the-day, library-overview, …; `kind` enum
+    `DASHBOARD_WIDGET_KINDS`). These are the pre-computed siblings of the `get_reading_statistic`
+    charts (`library-overview` ≈ a subset of `get_library_stats`). `currently-reading` is NOT a
+    dispatch `kind` — it keeps `list_currently_reading`. `get_book_shelf`
+    (`GET /dashboard/scrollers/{type}` — 7 curated shelves: recently-added, continue-reading/
+    listening, want-to-read, up-next-in-series, random, smart-scope; `type` enum
+    `BOOK_SHELF_TYPES`, trimmed by `shapeBookListItem`). `smart-scope` requires a `smartScopeId`
+    (validated tool-side; from `list_smart_scopes`).
+  - _Images (the only non-text tools):_ `get_book_cover` (`GET /books/{id}/cover|thumbnail`) and
+    `get_author_image` (`GET /authors/{id}/image|thumbnail`) return an MCP **image** content block
+    (base64 via `okImage` in `tools.ts`), not JSON. The client's `getImage` reads bytes off
+    `authFetch` (which throws `BookOrbitError` on a 404 → "no cover"). A `size` arg picks
+    full/thumbnail. This is the server's only departure from text-only output.
   - **Two pagination conventions:** the browse endpoints use `page`/`size` (helpers `pageParams`/
     `pageQuery` in `bookorbit-client.ts`), but `/books/{id}/sessions` uses `page`/`pageSize` — do
     not unify them. The browse `/books` endpoints (`series`, `authors`, `collections`, `smart-
