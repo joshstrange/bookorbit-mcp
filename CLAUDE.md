@@ -97,6 +97,27 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   **not** the `list_chapters`/`get_chapter` section indices — do not conflate them; match on
   `chapterTitle` if you need the surrounding text.
 
+- **Discovery / reading-state / stats tools are the same live-passthrough pattern** as the
+  annotation tools (call the client directly, NOT cached). Added on top of the reader + annotation
+  tools:
+  - _Related & browse:_ `get_related_books` (`GET /books/{id}/recommendations|series-books|
+author-books` via a `kind` arg), `list_series` / `get_series_books`, `list_authors` /
+    `get_author` / `get_author_books`, `list_collections` / `get_collection_books`,
+    `list_smart_scopes` / `get_smart_scope_books`, `list_libraries` (enriched with
+    `GET /libraries/{id}/stats`).
+  - _Reading state:_ `get_reading_progress` (`GET /books/{id}/progress` + best-effort
+    `/audio-progress`), `list_currently_reading`, `get_reading_sessions`.
+  - _Stats:_ `get_library_stats` (`GET /statistics/summary`), `get_reading_stats`
+    (`GET /user-statistics/summary`).
+  - **Two pagination conventions:** the browse endpoints use `page`/`size` (helpers `pageParams`/
+    `pageQuery` in `bookorbit-client.ts`), but `/books/{id}/sessions` uses `page`/`pageSize` — do
+    not unify them. The browse `/books` endpoints (`series`, `authors`, `collections`, `smart-
+scopes`) all return the same rich item, trimmed by `shapeBookListItem` in `tools.ts`; related-
+    books arrays are lighter, trimmed by `shapeRelatedBook`. `get_reading_progress` explicitly
+    drops the `kobo*` fields.
+  - **Not exposed:** `/metadata/{genres,tags,…}` facet lists — they returned empty on the live
+    instance and their shape is unconfirmed; revisit only with a populated response.
+
 ### Testing note
 
 `test/fixtures/` are **synthetic** (`epub-info.json`, `chapter-bundle.xhtml`) and deliberately
@@ -107,8 +128,10 @@ change.
 
 ## Scope (v1)
 
-EPUB only, read-only, single-user/local, keyword (not semantic) search scoped to one book.
-Reading the user's own annotations (highlights/notes) is in scope — see the annotations tools
-above. Out of scope by design: RAG/embeddings, cross-library content search, PDF/MOBI,
-bookmarks, and any write operations (including creating/editing annotations). The cache layout
-leaves room for a later cross-book index.
+EPUB only (for _text_), read-only, single-user/local, keyword (not semantic) search scoped to
+one book. In scope: reading the user's own annotations (highlights/notes), and read-only library
+navigation — discovery/browse (series, authors, collections, smart scopes, related books,
+libraries), reading state (progress, currently-reading, sessions), and statistics — see the
+tools above. Out of scope by design: RAG/embeddings, cross-library content search, PDF/MOBI
+_text extraction_, bookmarks, and any write operations (including creating/editing annotations).
+The cache layout leaves room for a later cross-book index.

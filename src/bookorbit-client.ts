@@ -2,10 +2,32 @@ import type {
   Annotation,
   AnnotatedBookSummary,
   AnnotationHubPage,
+  AuthorSummary,
   BookDetail,
+  BookListItem,
   BookSearchResult,
+  CurrentlyReading,
   EpubInfo,
+  Library,
+  LibraryStats,
+  NamedShelf,
+  Paged,
+  ReadingProgress,
+  ReadingSessionsPage,
+  RelatedBook,
+  SeriesSummary,
+  StatisticsSummary,
+  UserStatisticsSummary,
 } from "./types.js";
+
+/** How similar/related books are looked up (GET /books/{id}/...). */
+export type RelatedKind = "similar" | "same_series" | "same_author";
+
+/** Common page/size pagination options for the browse endpoints. */
+export interface PageOpts {
+  page?: number;
+  size?: number;
+}
 
 export interface ClientConfig {
   baseUrl: string;
@@ -91,6 +113,135 @@ export class BookOrbitClient {
     if (opts?.bookId != null) params.set("bookId", String(opts.bookId));
     const qs = params.toString();
     return this.getJson<AnnotationHubPage>(`/annotations${qs ? `?${qs}` : ""}`);
+  }
+
+  // --- discovery / browse (live, uncached) ---------------------------------
+
+  /** Related books for one book: similar, same-series, or same-author. */
+  async getRelatedBooks(bookId: number, kind: RelatedKind): Promise<RelatedBook[]> {
+    const suffix =
+      kind === "same_series"
+        ? "series-books"
+        : kind === "same_author"
+          ? "author-books"
+          : "recommendations";
+    return this.getJson<RelatedBook[]>(`/books/${bookId}/${suffix}`);
+  }
+
+  /** A page of the library's series. */
+  async listSeries(opts?: PageOpts): Promise<Paged<SeriesSummary>> {
+    return this.getJson<Paged<SeriesSummary>>(`/series${pageQuery(opts)}`);
+  }
+
+  /** A page of the books in one series. */
+  async getSeriesBooks(seriesId: number, opts?: PageOpts): Promise<Paged<BookListItem>> {
+    return this.getJson<Paged<BookListItem>>(
+      `/series/${seriesId}/books${pageQuery(opts)}`,
+    );
+  }
+
+  /** A page of the library's authors (each with a bio). */
+  async listAuthors(opts?: PageOpts): Promise<Paged<AuthorSummary>> {
+    return this.getJson<Paged<AuthorSummary>>(`/authors${pageQuery(opts)}`);
+  }
+
+  /** One author, including their bio. */
+  async getAuthor(authorId: number): Promise<AuthorSummary> {
+    return this.getJson<AuthorSummary>(`/authors/${authorId}`);
+  }
+
+  /** A page of the books by one author. */
+  async getAuthorBooks(authorId: number, opts?: PageOpts): Promise<Paged<BookListItem>> {
+    return this.getJson<Paged<BookListItem>>(
+      `/authors/${authorId}/books${pageQuery(opts)}`,
+    );
+  }
+
+  /** The user's collections (curated shelves). */
+  async listCollections(): Promise<NamedShelf[]> {
+    return this.getJson<NamedShelf[]>(`/collections?bookIds=`);
+  }
+
+  /** A page of the books in one collection. */
+  async getCollectionBooks(
+    collectionId: number,
+    opts?: PageOpts & { q?: string; collapseSeries?: boolean },
+  ): Promise<Paged<BookListItem>> {
+    const params = pageParams(opts);
+    if (opts?.q != null) params.set("q", opts.q);
+    if (opts?.collapseSeries != null)
+      params.set("collapseSeries", String(opts.collapseSeries));
+    return this.getJson<Paged<BookListItem>>(
+      `/collections/${collectionId}/books?${params}`,
+    );
+  }
+
+  /** The user's smart scopes (saved dynamic filters). */
+  async listSmartScopes(): Promise<NamedShelf[]> {
+    return this.getJson<NamedShelf[]>(`/smart-scopes`);
+  }
+
+  /** A page of the books matched by one smart scope. */
+  async getSmartScopeBooks(
+    scopeId: number,
+    opts?: PageOpts & { q?: string },
+  ): Promise<Paged<BookListItem>> {
+    const params = pageParams(opts);
+    if (opts?.q != null) params.set("q", opts.q);
+    return this.getJson<Paged<BookListItem>>(`/smart-scopes/${scopeId}/books?${params}`);
+  }
+
+  // --- reading state (live, uncached) --------------------------------------
+
+  /** Per-file reading progress for one book. */
+  async getReadingProgress(bookId: number): Promise<ReadingProgress[]> {
+    return this.getJson<ReadingProgress[]>(`/books/${bookId}/progress`);
+  }
+
+  /** Audiobook progress for one book (null when the book has no audio). */
+  async getAudioProgress(bookId: number): Promise<unknown> {
+    return this.getJson<unknown>(`/books/${bookId}/audio-progress`);
+  }
+
+  /** The books the user is currently reading, with progress. */
+  async listCurrentlyReading(): Promise<CurrentlyReading> {
+    return this.getJson<CurrentlyReading>(`/dashboard/widgets/currently-reading`);
+  }
+
+  /** A page of reading sessions for one book, plus aggregate stats. */
+  async getReadingSessions(
+    bookId: number,
+    opts?: { page?: number; pageSize?: number },
+  ): Promise<ReadingSessionsPage> {
+    const params = new URLSearchParams();
+    if (opts?.page != null) params.set("page", String(opts.page));
+    if (opts?.pageSize != null) params.set("pageSize", String(opts.pageSize));
+    const qs = params.toString();
+    return this.getJson<ReadingSessionsPage>(
+      `/books/${bookId}/sessions${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  // --- statistics & libraries (live, uncached) -----------------------------
+
+  /** Library-wide totals. */
+  async getStatisticsSummary(): Promise<StatisticsSummary> {
+    return this.getJson<StatisticsSummary>(`/statistics/summary`);
+  }
+
+  /** The user's personal reading totals. */
+  async getUserStatisticsSummary(): Promise<UserStatisticsSummary> {
+    return this.getJson<UserStatisticsSummary>(`/user-statistics/summary`);
+  }
+
+  /** All libraries (the raw per-library config blob). */
+  async listLibraries(): Promise<Library[]> {
+    return this.getJson<Library[]>(`/libraries`);
+  }
+
+  /** Book/size/format stats for one library. */
+  async getLibraryStats(libraryId: number): Promise<LibraryStats> {
+    return this.getJson<LibraryStats>(`/libraries/${libraryId}/stats`);
   }
 
   // --- internals -----------------------------------------------------------
@@ -195,6 +346,20 @@ export class BookOrbitClient {
     }
     return `${res.status} ${res.statusText}`;
   }
+}
+
+/** Build page/size query params (both optional). */
+function pageParams(opts?: PageOpts): URLSearchParams {
+  const params = new URLSearchParams();
+  if (opts?.page != null) params.set("page", String(opts.page));
+  if (opts?.size != null) params.set("size", String(opts.size));
+  return params;
+}
+
+/** page/size as a leading-"?" query string, or "" when empty. */
+function pageQuery(opts?: PageOpts): string {
+  const qs = pageParams(opts).toString();
+  return qs ? `?${qs}` : "";
 }
 
 /** Read Set-Cookie headers across runtimes (undici exposes getSetCookie). */

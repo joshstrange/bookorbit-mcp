@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BookOrbitClient } from "./bookorbit-client.js";
 import { BookOrbitError } from "./bookorbit-client.js";
 import type { BookService } from "./book-service.js";
-import type { Annotation } from "./types.js";
+import type { Annotation, BookListItem, RelatedBook } from "./types.js";
 
 /** Default cap on chapter text returned per call (~6k tokens). */
 const DEFAULT_MAX_CHARS = 24_000;
@@ -12,6 +12,41 @@ const MAX_ALLOWED_CHARS = 50_000;
 /** Default page size for the annotation hub (matches the server default). */
 const DEFAULT_ANNOTATION_PAGE_SIZE = 25;
 const MAX_ANNOTATION_PAGE_SIZE = 100;
+
+/** Default/limit page size for the browse/list tools (series, authors, etc.). */
+const DEFAULT_BROWSE_PAGE_SIZE = 25;
+const MAX_BROWSE_PAGE_SIZE = 100;
+
+/** True when any of a book's files is an EPUB. */
+function hasEpubFile(files?: BookListItem["files"]): boolean {
+  return (files ?? []).some((f) => f.format?.toLowerCase() === "epub");
+}
+
+/** Trim a rich browse-book item to the model-friendly fields. */
+function shapeBookListItem(b: BookListItem) {
+  return {
+    bookId: b.id,
+    title: b.title,
+    authors: b.authors,
+    seriesName: b.seriesName ?? null,
+    seriesIndex: b.seriesIndex ?? null,
+    publishedYear: b.publishedYear ?? null,
+    genres: b.genres ?? [],
+    hasEpub: hasEpubFile(b.files),
+  };
+}
+
+/** Trim a lighter related-book item. */
+function shapeRelatedBook(b: RelatedBook) {
+  return {
+    bookId: b.id,
+    title: b.title,
+    authors: b.authors,
+    seriesIndex: b.seriesIndex ?? null,
+    isAudiobook: b.isAudiobook ?? false,
+    isComic: b.isComic ?? false,
+  };
+}
 
 /** Shape one annotation into the trimmed, model-friendly object the tools return. */
 function shapeAnnotation(a: Annotation) {
@@ -360,6 +395,481 @@ export function registerTools(
           annotationCount: ordered.length,
           annotations: ordered.map(shapeAnnotation),
         });
+      }),
+  );
+
+  // --- Related & browse ------------------------------------------------------
+
+  server.registerTool(
+    "get_related_books",
+    {
+      title: "Get related books",
+      description:
+        "Find books related to one book by bookId: 'similar' recommendations, other books " +
+        "in the 'same_series' (with series index), or other books by the 'same_author'. " +
+        "Use to suggest what to read next or to explore a series/author.",
+      inputSchema: {
+        bookId: z.number().int().describe("The book's id (from search_books)."),
+        kind: z
+          .enum(["similar", "same_series", "same_author"])
+          .describe("Which relation to fetch."),
+      },
+    },
+    async ({ bookId, kind }) =>
+      guard(async () => {
+        const books = await client.getRelatedBooks(bookId, kind);
+        return ok({
+          bookId,
+          kind,
+          count: books.length,
+          books: books.map(shapeRelatedBook),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_series",
+    {
+      title: "List series",
+      description:
+        "List the library's series (paginated), each with book/read counts and its authors. " +
+        "Use the returned series id with get_series_books to read the books in a series.",
+      inputSchema: {
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+      },
+    },
+    async ({ page, size }) =>
+      guard(async () => {
+        const res = await client.listSeries({
+          page,
+          size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
+        });
+        return ok({
+          total: res.total,
+          page: res.page,
+          size: res.size,
+          series: res.items.map((s) => ({
+            seriesId: s.id,
+            name: s.name,
+            bookCount: s.bookCount,
+            readCount: s.readCount,
+            authors: s.authors,
+            lastAddedAt: s.lastAddedAt,
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "get_series_books",
+    {
+      title: "Get books in a series",
+      description:
+        "List the books in one series by seriesId (from list_series), in series order, " +
+        "paginated. Each item includes its series index and whether it has an EPUB.",
+      inputSchema: {
+        seriesId: z.number().int().describe("The series id (from list_series)."),
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+      },
+    },
+    async ({ seriesId, page, size }) =>
+      guard(async () => {
+        const res = await client.getSeriesBooks(seriesId, {
+          page,
+          size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
+        });
+        return ok({
+          seriesId,
+          total: res.total,
+          page: res.page,
+          size: res.size,
+          books: res.items.map(shapeBookListItem),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_authors",
+    {
+      title: "List authors",
+      description:
+        "List the library's authors (paginated) with their book counts. Use the returned " +
+        "author id with get_author for a bio or get_author_books for their books.",
+      inputSchema: {
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+      },
+    },
+    async ({ page, size }) =>
+      guard(async () => {
+        const res = await client.listAuthors({
+          page,
+          size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
+        });
+        return ok({
+          total: res.total,
+          page: res.page,
+          size: res.size,
+          authors: res.items.map((a) => ({
+            authorId: a.id,
+            name: a.name,
+            bookCount: a.bookCount,
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "get_author",
+    {
+      title: "Get author details",
+      description:
+        "Get one author by authorId (from list_authors), including their biography " +
+        "(description) and book count. Use get_author_books for their books.",
+      inputSchema: {
+        authorId: z.number().int().describe("The author id (from list_authors)."),
+      },
+    },
+    async ({ authorId }) =>
+      guard(async () => {
+        const a = await client.getAuthor(authorId);
+        return ok({
+          authorId: a.id,
+          name: a.name,
+          sortName: a.sortName,
+          description: a.description,
+          bookCount: a.bookCount,
+          lastAddedAt: a.lastAddedAt,
+        });
+      }),
+  );
+
+  server.registerTool(
+    "get_author_books",
+    {
+      title: "Get an author's books",
+      description:
+        "List the books by one author by authorId (from list_authors), paginated. Each " +
+        "item includes series info and whether it has an EPUB.",
+      inputSchema: {
+        authorId: z.number().int().describe("The author id (from list_authors)."),
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+      },
+    },
+    async ({ authorId, page, size }) =>
+      guard(async () => {
+        const res = await client.getAuthorBooks(authorId, {
+          page,
+          size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
+        });
+        return ok({
+          authorId,
+          total: res.total,
+          page: res.page,
+          size: res.size,
+          books: res.items.map(shapeBookListItem),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_collections",
+    {
+      title: "List collections",
+      description:
+        "List the user's collections (curated shelves). Use a returned collection id with " +
+        "get_collection_books to read the books it contains.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        const collections = await client.listCollections();
+        return ok({ count: collections.length, collections });
+      }),
+  );
+
+  server.registerTool(
+    "get_collection_books",
+    {
+      title: "Get books in a collection",
+      description:
+        "List the books in one collection by collectionId (from list_collections), paginated. " +
+        "Optionally filter with q or collapse series into a single entry.",
+      inputSchema: {
+        collectionId: z
+          .number()
+          .int()
+          .describe("The collection id (from list_collections)."),
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+        q: z.string().optional().describe("Filter within the collection."),
+        collapseSeries: z
+          .boolean()
+          .optional()
+          .describe("Collapse each series to one entry (default false)."),
+      },
+    },
+    async ({ collectionId, page, size, q, collapseSeries }) =>
+      guard(async () => {
+        const res = await client.getCollectionBooks(collectionId, {
+          page: page ?? 1,
+          size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
+          q,
+          collapseSeries,
+        });
+        return ok({
+          collectionId,
+          total: res.total,
+          page: res.page,
+          size: res.size,
+          books: res.items.map(shapeBookListItem),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_smart_scopes",
+    {
+      title: "List smart scopes",
+      description:
+        "List the user's smart scopes (saved dynamic filters). Use a returned scope id with " +
+        "get_smart_scope_books to read the books it currently matches.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        const scopes = await client.listSmartScopes();
+        return ok({ count: scopes.length, smartScopes: scopes });
+      }),
+  );
+
+  server.registerTool(
+    "get_smart_scope_books",
+    {
+      title: "Get books in a smart scope",
+      description:
+        "List the books matched by one smart scope by scopeId (from list_smart_scopes), " +
+        "paginated. Optionally filter with q.",
+      inputSchema: {
+        scopeId: z
+          .number()
+          .int()
+          .describe("The smart scope id (from list_smart_scopes)."),
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Items per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+        q: z.string().optional().describe("Filter within the scope."),
+      },
+    },
+    async ({ scopeId, page, size, q }) =>
+      guard(async () => {
+        const res = await client.getSmartScopeBooks(scopeId, {
+          page: page ?? 1,
+          size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
+          q,
+        });
+        return ok({
+          scopeId,
+          total: res.total,
+          page: res.page,
+          size: res.size,
+          books: res.items.map(shapeBookListItem),
+        });
+      }),
+  );
+
+  // --- Reading state ---------------------------------------------------------
+
+  server.registerTool(
+    "get_reading_progress",
+    {
+      title: "Get reading progress",
+      description:
+        "Get the user's reading progress for one book by bookId: per-file percentage and " +
+        "position (and audiobook progress when present). Use to answer 'where am I in this book'.",
+      inputSchema: {
+        bookId: z.number().int().describe("The book's id (from search_books)."),
+      },
+    },
+    async ({ bookId }) =>
+      guard(async () => {
+        const rows = await client.getReadingProgress(bookId);
+        const progress = rows.map((p) => ({
+          fileId: p.fileId,
+          percentage: p.percentage,
+          pageNumber: p.pageNumber,
+          cfi: p.cfi,
+          koreaderProgress: p.koreaderProgress,
+          updatedAt: p.updatedAt,
+        }));
+        let audioProgress: unknown = null;
+        try {
+          audioProgress = await client.getAudioProgress(bookId);
+        } catch {
+          // audiobook progress is optional; ignore if the endpoint errors
+        }
+        return ok({ bookId, progress, audioProgress: audioProgress ?? null });
+      }),
+  );
+
+  server.registerTool(
+    "list_currently_reading",
+    {
+      title: "List currently reading",
+      description:
+        "List the books the user is currently reading, each with progress. Use to answer " +
+        "'what am I reading right now'.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        const res = await client.listCurrentlyReading();
+        const books = (res.books ?? []).map((b) => ({
+          bookId: b.bookId,
+          title: b.title,
+          authors: b.authors,
+          progress: b.progress,
+          fileFormat: b.fileFormat,
+        }));
+        return ok({ count: books.length, books });
+      }),
+  );
+
+  server.registerTool(
+    "get_reading_sessions",
+    {
+      title: "Get reading sessions",
+      description:
+        "Get the user's reading-session history for one book by bookId, paginated, plus " +
+        "aggregate stats (total sessions, total/average time, first/last session, pace).",
+      inputSchema: {
+        bookId: z.number().int().describe("The book's id (from search_books)."),
+        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        pageSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BROWSE_PAGE_SIZE)
+          .optional()
+          .describe(`Sessions per page (default ${DEFAULT_BROWSE_PAGE_SIZE}).`),
+      },
+    },
+    async ({ bookId, page, pageSize }) =>
+      guard(async () => {
+        const res = await client.getReadingSessions(bookId, {
+          page,
+          pageSize: pageSize ?? DEFAULT_BROWSE_PAGE_SIZE,
+        });
+        return ok({
+          bookId,
+          total: res.total,
+          page: res.page,
+          pageSize: res.pageSize,
+          stats: res.stats,
+          sessions: res.items,
+        });
+      }),
+  );
+
+  // --- Statistics & libraries ------------------------------------------------
+
+  server.registerTool(
+    "get_library_stats",
+    {
+      title: "Get library statistics",
+      description:
+        "Get library-wide totals: number of books, authors, series, publishers, genres, " +
+        "languages, total storage, the publication-year range, and books added this year.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        return ok(await client.getStatisticsSummary());
+      }),
+  );
+
+  server.registerTool(
+    "get_reading_stats",
+    {
+      title: "Get reading statistics",
+      description:
+        "Get the user's personal reading totals: tracked, started, in-progress, and " +
+        "completed book counts, plus mean progress percent.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        return ok(await client.getUserStatisticsSummary());
+      }),
+  );
+
+  server.registerTool(
+    "list_libraries",
+    {
+      title: "List libraries",
+      description:
+        "List the libraries in the Book Orbit instance with each library's book count, " +
+        "total size, and per-format counts.",
+      inputSchema: {},
+    },
+    async () =>
+      guard(async () => {
+        const libraries = await client.listLibraries();
+        const withStats = await Promise.all(
+          libraries.map(async (lib) => {
+            let stats = null;
+            try {
+              stats = await client.getLibraryStats(lib.id);
+            } catch {
+              // stats are best-effort per library
+            }
+            return {
+              libraryId: lib.id,
+              name: lib.name,
+              displayOrder: lib.displayOrder,
+              stats,
+            };
+          }),
+        );
+        return ok({ count: withStats.length, libraries: withStats });
       }),
   );
 }

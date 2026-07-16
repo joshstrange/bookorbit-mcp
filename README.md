@@ -28,6 +28,10 @@ Three guardrails keep the model from drowning:
 
 ## Tools
 
+All tools are **read-only**.
+
+**Find & read book text**
+
 | Tool                                                         | What it does                                                                             |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `search_books(query, limit?)`                                | Find books by title/author/series; returns `bookId` + formats + `hasEpub`.               |
@@ -35,6 +39,38 @@ Three guardrails keep the model from drowning:
 | `list_chapters(bookId)`                                      | Chapter list with per-chapter char/word counts (no text). Parses + caches on first call. |
 | `get_chapter(bookId, chapter, offset?, maxChars?)`           | Plain text of one chapter, paginated.                                                    |
 | `search_in_book(bookId, query, maxResults?, caseSensitive?)` | Keyword search within a book → snippets + locations.                                     |
+
+**Discovery & browse**
+
+| Tool                                               | What it does                                                |
+| -------------------------------------------------- | ----------------------------------------------------------- |
+| `get_related_books(bookId, kind)`                  | `similar` / `same_series` / `same_author` books for a book. |
+| `list_series(page?, size?)`                        | Library's series with book/read counts.                     |
+| `get_series_books(seriesId, page?, size?)`         | Books in a series, in order.                                |
+| `list_authors(page?, size?)`                       | Library's authors with book counts.                         |
+| `get_author(authorId)`                             | One author, including their bio.                            |
+| `get_author_books(authorId, page?, size?)`         | Books by an author.                                         |
+| `list_collections()` / `get_collection_books(…)`   | User collections and their books.                           |
+| `list_smart_scopes()` / `get_smart_scope_books(…)` | Saved dynamic filters and the books they match.             |
+| `list_libraries()`                                 | Libraries with per-library book/size/format stats.          |
+
+**Reading state & stats**
+
+| Tool                                     | What it does                                          |
+| ---------------------------------------- | ----------------------------------------------------- |
+| `get_reading_progress(bookId)`           | Per-file progress (+ audiobook progress) for a book.  |
+| `list_currently_reading()`               | Books you're reading now, with progress.              |
+| `get_reading_sessions(bookId, page?, …)` | Reading-session history + aggregate stats for a book. |
+| `get_library_stats()`                    | Library-wide totals (books/authors/series/storage/…). |
+| `get_reading_stats()`                    | Your personal reading totals (started/completed/…).   |
+
+**Annotations** (your own highlights & notes)
+
+| Tool                                          | What it does                                        |
+| --------------------------------------------- | --------------------------------------------------- |
+| `list_annotations(page?, pageSize?, bookId?)` | All highlights/notes across the library, paginated. |
+| `list_annotated_books()`                      | Which books have annotations, with counts.          |
+| `get_annotations(bookId)`                     | One book's highlights/notes, in chapter order.      |
 
 **Typical flow:** `search_books` → `list_chapters` → `get_chapter` /
 `search_in_book`.
@@ -108,6 +144,9 @@ node --import tsx scripts/mcp-check.mts   # drives the built server over the MCP
   of contents into meaningful sections and slices each one by its anchor range.
 - **Cache layout:** `~/.cache/bookorbit-mcp/<bookId>/book.json` (chapter list +
   sizes) and `text/section-NNN.txt` (extracted text per chapter).
+- **Discovery, reading-state, stats, and annotation tools are live passthroughs**
+  to Book Orbit and are **not cached** (that data is mutable); only extracted EPUB
+  text is cached.
 - **Not included (v1):** semantic/RAG search, cross-library content search,
   PDF/MOBI, and any write operations. The cache layout leaves room to add a
   cross-book index later.

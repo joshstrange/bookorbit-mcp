@@ -166,8 +166,225 @@ function stubClient() {
         },
       };
     },
+    // A rich browse-book item carrying noise fields the tools must trim.
+    async getRelatedBooks(_bookId: number, kind: string) {
+      return [
+        {
+          id: kind === "same_author" ? 500 : 116,
+          title: "Related Book",
+          authors: ["Test Author"],
+          seriesIndex: kind === "same_series" ? 2 : undefined,
+          hasCover: true,
+          isAudiobook: false,
+          isComic: false,
+          updatedAt: "2026-06-21T03:06:03.762Z",
+        },
+      ];
+    },
+    async listSeries(opts?: { page?: number; size?: number }) {
+      return {
+        items: [
+          {
+            id: 387,
+            name: "Between Earth and Sky",
+            bookCount: 3,
+            readCount: 0,
+            authors: ["Rebecca Roanhorse"],
+            coverBookIds: [245, 246, 247],
+            lastAddedAt: "2026-06-21T19:46:23.164Z",
+          },
+        ],
+        total: 34,
+        page: opts?.page ?? 1,
+        size: opts?.size ?? 25,
+      };
+    },
+    async getSeriesBooks(_seriesId: number, opts?: { page?: number; size?: number }) {
+      return {
+        items: [sampleBookItem()],
+        total: 1,
+        page: opts?.page ?? 1,
+        size: opts?.size ?? 25,
+      };
+    },
+    async listAuthors(opts?: { page?: number; size?: number }) {
+      return {
+        items: [
+          {
+            id: 192,
+            name: "Aldous Huxley",
+            sortName: null,
+            description: "A biography of the author.",
+            bookCount: 1,
+            lastAddedAt: "2026-06-21T18:16:44.256Z",
+          },
+        ],
+        total: 48,
+        page: opts?.page ?? 1,
+        size: opts?.size ?? 25,
+      };
+    },
+    async getAuthor(authorId: number) {
+      return {
+        id: authorId,
+        name: "Aldous Huxley",
+        sortName: null,
+        description: "A biography of the author.",
+        bookCount: 1,
+        lastAddedAt: "2026-06-21T18:16:44.256Z",
+      };
+    },
+    async getAuthorBooks(_authorId: number, opts?: { page?: number; size?: number }) {
+      return {
+        items: [sampleBookItem()],
+        total: 1,
+        page: opts?.page ?? 1,
+        size: opts?.size ?? 25,
+      };
+    },
+    async listCollections() {
+      return [{ id: 7, name: "Favorites", bookCount: 4 }];
+    },
+    async getCollectionBooks(_id: number, opts?: { page?: number; size?: number }) {
+      return {
+        items: [sampleBookItem()],
+        total: 1,
+        page: opts?.page ?? 1,
+        size: opts?.size ?? 25,
+      };
+    },
+    async listSmartScopes() {
+      return [{ id: 3, name: "Unread Sci-Fi" }];
+    },
+    async getSmartScopeBooks(_id: number, opts?: { page?: number; size?: number }) {
+      return {
+        items: [sampleBookItem()],
+        total: 1,
+        page: opts?.page ?? 1,
+        size: opts?.size ?? 25,
+      };
+    },
+    async getReadingProgress(_bookId: number) {
+      return [
+        {
+          fileId: 69,
+          cfi: null,
+          pageNumber: null,
+          percentage: 0.1,
+          koboLocationSource: null,
+          koboLocationType: null,
+          koreaderProgress: "/body/DocFragment[1]/body/div",
+          updatedAt: "2026-07-15T23:10:34.231Z",
+        },
+      ];
+    },
+    async getAudioProgress(_bookId: number) {
+      return null;
+    },
+    async listCurrentlyReading() {
+      return {
+        books: [
+          {
+            bookId: 115,
+            title: "Ender's Game",
+            authors: ["Orson Scott Card"],
+            progress: 0.1,
+            fileFormat: "epub",
+            hasCover: true,
+            fileId: 69,
+          },
+        ],
+      };
+    },
+    async getReadingSessions(
+      _bookId: number,
+      opts?: { page?: number; pageSize?: number },
+    ) {
+      return {
+        items: [],
+        total: 0,
+        page: opts?.page ?? 1,
+        pageSize: opts?.pageSize ?? 25,
+        stats: {
+          totalSessions: 0,
+          totalSeconds: 0,
+          avgDurationSeconds: 0,
+          firstSessionAt: null,
+          lastSessionAt: null,
+          paceProgressDelta: 0,
+          paceDurationSeconds: 0,
+        },
+      };
+    },
+    async getStatisticsSummary() {
+      return {
+        totalBooks: 170,
+        totalAuthors: 48,
+        totalSeries: 34,
+        totalPublishers: 12,
+        totalStorageBytes: 297535871,
+        totalGenres: 20,
+        totalLanguages: 3,
+        publicationYearMin: 1855,
+        publicationYearMax: 2024,
+        booksAddedThisYear: 170,
+      };
+    },
+    async getUserStatisticsSummary() {
+      return {
+        trackedBooks: 5,
+        startedBooks: 3,
+        inProgressBooks: 2,
+        completedBooks: 1,
+        meanProgressPercent: 42,
+      };
+    },
+    async listLibraries() {
+      return [
+        {
+          id: 1,
+          name: "eBooks",
+          displayOrder: 0,
+          watch: true,
+          organizationMode: "author",
+        },
+      ];
+    },
+    async getLibraryStats(_libraryId: number) {
+      return {
+        totalBooks: 170,
+        totalSizeBytes: 297535871,
+        formatCounts: { epub: 168, pdf: 1, mobi: 1 },
+      };
+    },
   } as unknown as BookOrbitClient;
   return client;
+}
+
+/** A rich browse-book item (as the /{...}/books endpoints return) with noise fields. */
+function sampleBookItem() {
+  return {
+    id: 245,
+    status: "present",
+    title: "Black Sun",
+    seriesId: 387,
+    seriesName: "Between Earth and Sky",
+    seriesIndex: 1,
+    seriesMemberships: [
+      {
+        seriesId: 387,
+        seriesName: "Between Earth and Sky",
+        seriesIndex: 1,
+        displayOrder: 0,
+      },
+    ],
+    authors: ["Rebecca Roanhorse"],
+    files: [{ id: 135, format: "epub", role: "primary", sizeBytes: 484303 }],
+    publishedDate: null,
+    publishedYear: 2020,
+    language: "English",
+    genres: ["Fantasy", "Fiction"],
+  };
 }
 
 async function setup() {
@@ -284,4 +501,133 @@ test("list_annotations passes pagination through and forwards bookId", async () 
   const filtered = await call("list_annotations", { bookId: 400 });
   assert.equal(filtered.data.total, 1);
   assert.equal(filtered.data.annotations[0].bookId, 400);
+});
+
+test("get_related_books trims to bookId and carries series index", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_related_books", { bookId: 115, kind: "same_series" });
+  assert.equal(data.kind, "same_series");
+  assert.equal(data.count, 1);
+  const b = data.books[0];
+  assert.equal(b.bookId, 116);
+  assert.equal(b.seriesIndex, 2);
+  assert.equal(b.isAudiobook, false);
+  assert.ok(!("id" in b));
+  assert.ok(!("hasCover" in b));
+});
+
+test("list_series passes pagination through and trims items", async () => {
+  const { call } = await setup();
+  const { data } = await call("list_series", { size: 10 });
+  assert.equal(data.total, 34);
+  assert.equal(data.size, 10);
+  const s = data.series[0];
+  assert.equal(s.seriesId, 387);
+  assert.equal(s.bookCount, 3);
+  assert.ok(!("coverBookIds" in s));
+});
+
+test("get_series_books shapes rich items and flags EPUB", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_series_books", { seriesId: 387 });
+  const b = data.books[0];
+  assert.equal(b.bookId, 245);
+  assert.equal(b.seriesIndex, 1);
+  assert.equal(b.hasEpub, true);
+  // Noise fields dropped.
+  assert.ok(!("status" in b));
+  assert.ok(!("files" in b));
+  assert.ok(!("seriesMemberships" in b));
+  assert.ok(!("language" in b));
+});
+
+test("list_authors is lean; get_author returns the bio", async () => {
+  const { call } = await setup();
+  const list = await call("list_authors", {});
+  const a = list.data.authors[0];
+  assert.equal(a.authorId, 192);
+  assert.ok(!("description" in a));
+
+  const detail = await call("get_author", { authorId: 192 });
+  assert.equal(detail.data.authorId, 192);
+  assert.equal(detail.data.description, "A biography of the author.");
+});
+
+test("get_author_books / get_collection_books / get_smart_scope_books share the item shape", async () => {
+  const { call } = await setup();
+  for (const [name, args] of [
+    ["get_author_books", { authorId: 192 }],
+    ["get_collection_books", { collectionId: 7 }],
+    ["get_smart_scope_books", { scopeId: 3 }],
+  ] as const) {
+    const { data } = await call(name, args);
+    assert.equal(data.books[0].bookId, 245, name);
+    assert.equal(data.books[0].hasEpub, true, name);
+    assert.ok(!("files" in data.books[0]), name);
+  }
+});
+
+test("list_collections and list_smart_scopes pass shelves through with a count", async () => {
+  const { call } = await setup();
+  const cols = await call("list_collections", {});
+  assert.equal(cols.data.count, 1);
+  assert.equal(cols.data.collections[0].name, "Favorites");
+
+  const scopes = await call("list_smart_scopes", {});
+  assert.equal(scopes.data.count, 1);
+  assert.equal(scopes.data.smartScopes[0].id, 3);
+});
+
+test("get_reading_progress drops kobo noise and includes audioProgress", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_reading_progress", { bookId: 115 });
+  const p = data.progress[0];
+  assert.equal(p.percentage, 0.1);
+  assert.equal(p.fileId, 69);
+  assert.ok(!("koboLocationSource" in p));
+  assert.ok(!("koboLocationType" in p));
+  assert.equal(data.audioProgress, null);
+});
+
+test("list_currently_reading returns trimmed books with progress", async () => {
+  const { call } = await setup();
+  const { data } = await call("list_currently_reading", {});
+  assert.equal(data.count, 1);
+  assert.equal(data.books[0].bookId, 115);
+  assert.equal(data.books[0].progress, 0.1);
+  assert.ok(!("hasCover" in data.books[0]));
+  assert.ok(!("fileId" in data.books[0]));
+});
+
+test("get_reading_sessions surfaces stats and pagination", async () => {
+  const { call } = await setup();
+  const { data } = await call("get_reading_sessions", { bookId: 115, pageSize: 5 });
+  assert.equal(data.pageSize, 5);
+  assert.equal(data.total, 0);
+  assert.equal(data.stats.totalSessions, 0);
+  assert.deepEqual(data.sessions, []);
+});
+
+test("get_library_stats and get_reading_stats pass summaries through", async () => {
+  const { call } = await setup();
+  const lib = await call("get_library_stats", {});
+  assert.equal(lib.data.totalBooks, 170);
+  assert.equal(lib.data.totalAuthors, 48);
+
+  const reading = await call("get_reading_stats", {});
+  assert.equal(reading.data.completedBooks, 1);
+  assert.equal(reading.data.meanProgressPercent, 42);
+});
+
+test("list_libraries trims config and attaches per-library stats", async () => {
+  const { call } = await setup();
+  const { data } = await call("list_libraries", {});
+  assert.equal(data.count, 1);
+  const lib = data.libraries[0];
+  assert.equal(lib.libraryId, 1);
+  assert.equal(lib.name, "eBooks");
+  assert.ok(!("watch" in lib));
+  assert.ok(!("organizationMode" in lib));
+  assert.equal(lib.stats.totalBooks, 170);
+  assert.equal(lib.stats.formatCounts.epub, 168);
 });

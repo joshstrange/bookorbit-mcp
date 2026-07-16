@@ -47,5 +47,30 @@ console.log(
   `get_chapter[7] -> "${c.label}" hasMore=${c.hasMore}: ${JSON.stringify(c.text.slice(0, 80))}`,
 );
 
+const parse = async (r: any) => JSON.parse((r.content as any)[0].text);
+
+const related = await parse(
+  await client.callTool({
+    name: "get_related_books",
+    arguments: { bookId: books[0].bookId, kind: "similar" },
+  }),
+);
+console.log(`get_related_books(similar) -> ${related.count} book(s)`);
+
+const seriesList = await parse(
+  await client.callTool({ name: "list_series", arguments: { size: 3 } }),
+);
+console.log(`list_series -> ${seriesList.total} total`);
+
+const libStats = await parse(
+  await client.callTool({ name: "get_library_stats", arguments: {} }),
+);
+console.log(`get_library_stats -> ${libStats.totalBooks} books`);
+
+const currently = await parse(
+  await client.callTool({ name: "list_currently_reading", arguments: {} }),
+);
+console.log(`list_currently_reading -> ${currently.count} book(s)`);
+
 await client.close();
 console.log("MCP CHECK OK");

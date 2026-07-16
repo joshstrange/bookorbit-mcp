@@ -62,4 +62,58 @@ const t1 = Date.now();
 await service.getParsedBook(book.id);
 console.log(`   re-read in ${Date.now() - t1}ms`);
 
+console.log("\n6) discovery & browse");
+const series = await client.listSeries({ size: 3 });
+console.log(`   series: ${series.total} total; first: ${series.items[0]?.name}`);
+if (series.items[0]) {
+  const seriesBooks = await client.getSeriesBooks(series.items[0].id, { size: 3 });
+  console.log(
+    `   series-books[${series.items[0].id}]: ${seriesBooks.items
+      .map((b) => `${b.title}#${b.seriesIndex}`)
+      .join(", ")}`,
+  );
+}
+const authors = await client.listAuthors({ size: 3 });
+console.log(`   authors: ${authors.total} total; first: ${authors.items[0]?.name}`);
+if (authors.items[0]) {
+  const author = await client.getAuthor(authors.items[0].id);
+  console.log(`   author bio: ${(author.description ?? "(none)").slice(0, 80)}...`);
+}
+const collections = await client.listCollections();
+const scopes = await client.listSmartScopes();
+console.log(`   collections: ${collections.length}; smart scopes: ${scopes.length}`);
+
+console.log(`\n7) related books for bookId=${book.id}`);
+for (const kind of ["similar", "same_series", "same_author"] as const) {
+  const related = await client.getRelatedBooks(book.id, kind);
+  console.log(`   ${kind}: ${related.length} (e.g. ${related[0]?.title ?? "-"})`);
+}
+
+console.log(`\n8) reading state for bookId=${book.id}`);
+const progress = await client.getReadingProgress(book.id);
+console.log(
+  `   progress: ${progress.map((p) => `${Math.round((p.percentage ?? 0) * 100)}%`).join(", ") || "(none)"}`,
+);
+const reading = await client.listCurrentlyReading();
+console.log(`   currently reading: ${reading.books?.length ?? 0} book(s)`);
+const sessions = await client.getReadingSessions(book.id, { pageSize: 3 });
+console.log(
+  `   sessions: ${sessions.stats.totalSessions} total, ${sessions.stats.totalSeconds}s read`,
+);
+
+console.log("\n9) statistics & libraries");
+const stats = await client.getStatisticsSummary();
+console.log(
+  `   library: ${stats.totalBooks} books, ${stats.totalAuthors} authors, ${stats.totalSeries} series`,
+);
+const userStats = await client.getUserStatisticsSummary();
+console.log(
+  `   reading: ${userStats.completedBooks}/${userStats.trackedBooks} completed, mean ${userStats.meanProgressPercent}%`,
+);
+const libraries = await client.listLibraries();
+for (const lib of libraries) {
+  const ls = await client.getLibraryStats(lib.id);
+  console.log(`   library "${lib.name}": ${ls.totalBooks} books`);
+}
+
 console.log("\nSMOKE OK");

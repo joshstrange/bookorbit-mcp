@@ -130,6 +130,167 @@ export interface AnnotationHubPage {
   };
 }
 
+// --- Discovery, browse, and reading state (live passthroughs, not cached) -----
+
+/**
+ * A generic paginated page as returned by the browse endpoints that use
+ * page/size query params (GET /series, /authors, /{...}/books).
+ */
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+/**
+ * A lighter related-book item from GET /books/{id}/recommendations,
+ * /books/{id}/series-books, and /books/{id}/author-books.
+ */
+export interface RelatedBook {
+  id: number;
+  title: string;
+  authors: string[];
+  seriesIndex?: number | null;
+  hasCover?: boolean;
+  isAudiobook?: boolean;
+  isComic?: boolean;
+  updatedAt?: string;
+}
+
+/**
+ * A rich book item shared by the browse-by-{series,author,collection,scope}
+ * "/books" endpoints. Only the fields we surface are typed.
+ */
+export interface BookListItem {
+  id: number;
+  status?: string | null;
+  title: string;
+  seriesId?: number | null;
+  seriesName?: string | null;
+  seriesIndex?: number | null;
+  authors: string[];
+  files?: Array<{
+    id: number;
+    format: string;
+    role: string | null;
+    sizeBytes: number | null;
+  }>;
+  publishedYear?: number | null;
+  language?: string | null;
+  genres?: string[];
+}
+
+/** One series from GET /series. */
+export interface SeriesSummary {
+  id: number;
+  name: string;
+  bookCount: number;
+  readCount: number;
+  authors: string[];
+  coverBookIds: number[];
+  lastAddedAt: string | null;
+}
+
+/** One author from GET /authors and GET /authors/{id} (description is a bio). */
+export interface AuthorSummary {
+  id: number;
+  name: string;
+  sortName: string | null;
+  description: string | null;
+  bookCount: number;
+  lastAddedAt: string | null;
+}
+
+/**
+ * A user collection (GET /collections) or smart scope (GET /smart-scopes).
+ * Shape is loosely typed — the endpoints are live but empty on the dev instance.
+ */
+export interface NamedShelf {
+  id: number;
+  name: string;
+  [k: string]: unknown;
+}
+
+/** One row of GET /books/{id}/progress (kobo-specific fields dropped). */
+export interface ReadingProgress {
+  fileId: number;
+  cfi: string | null;
+  pageNumber: number | null;
+  percentage: number | null;
+  koreaderProgress: string | null;
+  updatedAt: string | null;
+}
+
+/** GET /dashboard/widgets/currently-reading. */
+export interface CurrentlyReading {
+  books: Array<{
+    bookId: number;
+    title: string;
+    authors: string[];
+    progress: number | null;
+    fileFormat: string | null;
+    hasCover: boolean;
+    fileId: number | null;
+  }>;
+}
+
+/** GET /books/{bookId}/sessions — reading-session history plus aggregate stats. */
+export interface ReadingSessionsPage {
+  items: Array<Record<string, unknown>>;
+  total: number;
+  page: number;
+  pageSize: number;
+  stats: {
+    totalSessions: number;
+    totalSeconds: number;
+    avgDurationSeconds: number;
+    firstSessionAt: string | null;
+    lastSessionAt: string | null;
+    paceProgressDelta: number;
+    paceDurationSeconds: number;
+    [k: string]: unknown;
+  };
+}
+
+/** GET /statistics/summary — library-wide totals. */
+export interface StatisticsSummary {
+  totalBooks: number;
+  totalAuthors: number;
+  totalSeries: number;
+  totalPublishers: number;
+  totalStorageBytes: number;
+  totalGenres: number;
+  totalLanguages: number;
+  publicationYearMin: number | null;
+  publicationYearMax: number | null;
+  booksAddedThisYear: number;
+}
+
+/** GET /user-statistics/summary — the user's personal reading totals. */
+export interface UserStatisticsSummary {
+  trackedBooks: number;
+  startedBooks: number;
+  inProgressBooks: number;
+  completedBooks: number;
+  meanProgressPercent: number;
+}
+
+/** GET /libraries — the per-library config blob (only a few fields are surfaced). */
+export interface Library {
+  id: number;
+  name: string;
+  displayOrder: number;
+  [k: string]: unknown;
+}
+
+/** GET /libraries/{id}/stats. */
+export interface LibraryStats {
+  totalBooks: number;
+  totalSizeBytes: number;
+  formatCounts: Record<string, number>;
+}
+
 /**
  * A resolved reading section — the human-meaningful unit the tools expose as a
  * "chapter". Text lives in `spineHref`, optionally sliced to the anchor range
