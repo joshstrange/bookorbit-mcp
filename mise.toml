@@ -1,0 +1,6 @@
+[tools]
+"npm:@mermaid-js/mermaid-cli" = "11.17.0"
+
+[tasks.docs-render]
+description = "Render README diagrams with Mermaid CLI (sandbox enabled)"
+run = "mmdc -i README.md -o /tmp/bookorbit-mcp-docs.md -e png -j 1"

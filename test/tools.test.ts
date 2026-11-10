@@ -49,6 +49,9 @@ function fakeServer() {
 
 function stubClient() {
   const client = {
+    async getBook(id: number) {
+      return { id, files: [{ id: 1, format: "epub", sizeBytes: 123 }] };
+    },
     async searchBooks(_q: string) {
       return [
         {

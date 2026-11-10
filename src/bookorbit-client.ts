@@ -1,3 +1,4 @@
+import { credentialsSchema, type NativeSession, type SessionStore } from "./session.js";
 import type {
   Annotation,
   AnnotatedBookSummary,
@@ -40,6 +41,8 @@ export interface ClientConfig {
   password?: string;
   /** Static Bearer token (dev only; not auto-refreshed). */
   token?: string;
+  session?: NativeSession;
+  sessionStore?: SessionStore;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -65,11 +68,14 @@ export class BookOrbitClient {
   private readonly fetchImpl: typeof fetch;
   private accessToken: string | null;
   private refreshCookie: string | null = null;
+  private nativeSession: NativeSession | undefined;
+  private refreshing: Promise<boolean> | undefined;
 
   constructor(private readonly config: ClientConfig) {
     this.apiBase = `${config.baseUrl.replace(/\/+$/, "")}/api/v1`;
     this.fetchImpl = config.fetchImpl ?? fetch;
-    this.accessToken = config.token ?? null;
+    this.nativeSession = config.session;
+    this.accessToken = config.session?.accessToken ?? config.token ?? null;
   }
 
   private get canReauthenticate(): boolean {
@@ -84,6 +90,47 @@ export class BookOrbitClient {
 
   async getBook(id: number): Promise<BookDetail> {
     return this.getJson<BookDetail>(`/books/${id}`);
+  }
+
+  /** Download only an attached file selected from an authorized book's metadata. */
+  async getBookFile(
+    bookId: number,
+    fileId: number,
+    options: { purpose?: "read" | "download"; maxBytes?: number } = {},
+  ): Promise<Buffer> {
+    const maxBytes = options.maxBytes ?? 20 * 1024 * 1024;
+    const book = await this.getBook(bookId);
+    const file = book.files.find((f) => f.id === fileId);
+    if (!file) throw new Error("File does not belong to this book.");
+    if (file.sizeBytes != null && file.sizeBytes > maxBytes)
+      throw new Error("Book file exceeds the download limit.");
+    const res = await this.authFetch(
+      `/books/files/${fileId}/${options.purpose === "read" ? "serve" : "download"}`,
+    );
+    if (Number(res.headers.get("content-length")) > maxBytes) {
+      await res.body?.cancel();
+      throw new Error("Book file exceeds the download limit.");
+    }
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    if (res.body) {
+      const reader = res.body.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          length += value.length;
+          if (length > maxBytes) {
+            await reader.cancel();
+            throw new Error("Book file exceeds the download limit.");
+          }
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    return Buffer.concat(chunks);
   }
 
   async getEpubInfo(bookId: number): Promise<EpubInfo> {
@@ -384,11 +431,17 @@ export class BookOrbitClient {
 
   /** Fetch with Bearer auth, refreshing / re-logging in once on a 401. */
   private async authFetch(path: string, init: RequestInit = {}): Promise<Response> {
-    if (!this.accessToken && this.canReauthenticate) await this.login();
+    if (!this.accessToken && this.canReauthenticate) await this.reauthenticate();
 
+    const attemptedToken = this.accessToken;
     let res = await this.rawFetch(path, init);
-    if (res.status === 401 && (this.canReauthenticate || this.refreshCookie)) {
-      const recovered = await this.reauthenticate();
+    if (
+      res.status === 401 &&
+      (this.canReauthenticate || this.refreshCookie || this.nativeSession)
+    ) {
+      await res.body?.cancel();
+      const recovered =
+        attemptedToken !== this.accessToken || (await this.reauthenticate());
       if (recovered) res = await this.rawFetch(path, init);
     }
 
@@ -402,11 +455,48 @@ export class BookOrbitClient {
   private async rawFetch(path: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
     if (this.accessToken) headers.set("Authorization", `Bearer ${this.accessToken}`);
-    return this.fetchImpl(`${this.apiBase}${path}`, { ...init, headers });
+    return this.fetchImpl(`${this.apiBase}${path}`, {
+      ...init,
+      headers,
+      redirect: "error",
+      signal: init.signal ?? AbortSignal.timeout(60_000),
+    });
   }
 
   /** Try a token refresh, falling back to a full re-login. Returns success. */
   private async reauthenticate(): Promise<boolean> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = this.recoverSession().finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
+  private async recoverSession(): Promise<boolean> {
+    if (this.nativeSession) {
+      const res = await this.fetchImpl(`${this.apiBase}/auth/refresh`, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: this.nativeSession.refreshToken }),
+      });
+      if (!res.ok)
+        throw new BookOrbitError(
+          "Native session refresh failed; run bookorbit-mcp login again.",
+          res.status,
+          "/auth/refresh",
+        );
+      const credentials = credentialsSchema.parse(await res.json());
+      const session = { ...this.nativeSession, ...credentials };
+      // Rotating refresh tokens must reach disk before any caller uses the new access token.
+      if (!this.config.sessionStore)
+        throw new Error("Native session requires a session store.");
+      await this.config.sessionStore.save(session);
+      this.nativeSession = session;
+      this.accessToken = session.accessToken;
+      return true;
+    }
     if (this.refreshCookie) {
       try {
         await this.refresh();
@@ -425,6 +515,8 @@ export class BookOrbitClient {
   private async login(): Promise<void> {
     const res = await this.fetchImpl(`${this.apiBase}/auth/login`, {
       method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         username: this.config.username,
@@ -448,6 +540,8 @@ export class BookOrbitClient {
     if (this.refreshCookie) headers.set("Cookie", `refresh_token=${this.refreshCookie}`);
     const res = await this.fetchImpl(`${this.apiBase}/auth/refresh`, {
       method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
       headers,
     });
     if (!res.ok) {

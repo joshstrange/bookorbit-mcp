@@ -11,11 +11,25 @@ model find a book, look at its chapter list, and pull only the pieces it needs.
 
 ## How it works
 
-BookOrbit stores raw EPUB files and exposes a reader backend
-(`/epub/{bookId}/info` + `/epub/{bookId}/file/{path}`). This server uses that
-backend to read a book's structure, fetch only the needed chapters, strip the
-XHTML to plain text, and cache the result on disk. Nothing is re-downloaded
-after the first read.
+```mermaid
+flowchart LR
+    C["Hermes / ChatGPT / MCP clients"] -->|Gateway authentication| G["Existing LiteLLM"]
+    G -->|Private HTTP /mcp| M["bookorbit-mcp"]
+    M -->|Native BookOrbit session| B["BookOrbit books and live notes"]
+    M --> P["Local PDF.js and text cache"]
+```
+
+| Capability     | Before                   | Now                                                          |
+| -------------- | ------------------------ | ------------------------------------------------------------ |
+| Text           | EPUB chapters            | EPUB + PDF chapters/pages; whole-book text with continuation |
+| Original book  | Not exposed              | Explicit EPUB/PDF file fetch as an embedded MCP resource     |
+| Authentication | Password or static token | Also native BookOrbit SSO enrollment and durable refresh     |
+| Transport      | stdio                    | Also stateless Streamable HTTP behind an existing gateway    |
+| Notes          | Live BookOrbit reads     | Same live reads; no export or extra index                    |
+
+EPUB text uses BookOrbit's reader API; PDF text uses PDF.js locally. Cached text
+is isolated by origin/account and source file revision. Every read checks current
+BookOrbit access, including cache hits. Annotations are always fetched live.
 
 Three guardrails keep the model from drowning:
 
@@ -35,6 +49,8 @@ All tools are **read-only**.
 | Tool                                                         | What it does                                                                             |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `search_books(query, limit?)`                                | Find books by title/author/series; returns `bookId` + formats + `hasEpub`.               |
+| `get_book_text(bookId, fileId?, offset?, maxChars?)`         | Complete text in order, with explicit continuation.                                      |
+| `get_book_file(bookId, fileId)`                              | Original EPUB/PDF as an embedded MCP resource, up to 20 MiB.                             |
 | `get_book(bookId)`                                           | Full metadata (description, series, genres, files).                                      |
 | `list_chapters(bookId)`                                      | Chapter list with per-chapter char/word counts (no text). Parses + caches on first call. |
 | `get_chapter(bookId, chapter, offset?, maxChars?)`           | Plain text of one chapter, paginated.                                                    |
@@ -90,30 +106,49 @@ All tools are **read-only**.
 
 ## Requirements & scope
 
-- **EPUB only** (v1). Books without an EPUB file return a clear error from the
-  text tools.
-- **Auth:** BookOrbit access tokens expire after ~15 minutes and there is no
-  long-lived API key, so the server logs in with your **username + password** and
-  refreshes / re-logs in automatically. A static `BOOKORBIT_TOKEN` is supported
-  for quick tests but will not auto-refresh.
-- Single-user / local: it acts as the account you configure.
+| Requirement   | Behavior                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Runtime       | Node.js >=22.13; locked dependencies installed in a persistent checkout                                              |
+| EPUB          | BookOrbit reader API; multiple EPUB editions require original-file fetch because the reader API selects by book ID   |
+| PDF           | Embedded text, outlines and 1-based page ranges; without an outline, sections are pages                              |
+| Scanned pages | Reported in `requiresOcrPages`; this server does not perform OCR                                                     |
+| Limits        | Downloads up to 20 MiB; PDFs up to 2,000 pages / 10 million extracted characters; one cold-book extraction at a time |
+| Identity      | One configured BookOrbit account per process; all authorized gateway clients use that account                        |
+| SSO           | BookOrbit 3.7 native OIDC APIs; see [gateway and SSO setup](docs/gateway.md)                                         |
+| Existing data | Books, notes and reading state stay in BookOrbit; no writes or migrations                                            |
+
+The original-file resource URI is an identifier, not a public download link.
+Clients without embedded binary resource support can use `get_book_text`.
+PDF text order follows PDF.js extraction and may differ from visual layout in
+complex columns/tables. Blank pages and image-only pages are both flagged as
+potential OCR candidates. Embeddings are not required; existing semantic indexes
+can remain separate.
 
 ## Configuration
 
 Set these as environment variables (or in a local `.env` — see `.env.example`):
 
-| Variable             | Required    | Notes                                                               |
-| -------------------- | ----------- | ------------------------------------------------------------------- |
-| `BOOKORBIT_URL`      | yes         | Base URL, e.g. `https://bookorbit.example.com` (trailing slash ok). |
-| `BOOKORBIT_USERNAME` | recommended | Enables automatic token refresh.                                    |
-| `BOOKORBIT_PASSWORD` | recommended |                                                                     |
-| `BOOKORBIT_TOKEN`    | alternative | Static Bearer token; dev/testing only (expires ~15 min).            |
-| `CACHE_DIR`          | optional    | Where extracted text is cached (default `~/.cache/bookorbit-mcp`).  |
+| Variable                                    | Required          | Notes                                                                 |
+| ------------------------------------------- | ----------------- | --------------------------------------------------------------------- |
+| `BOOKORBIT_URL`                             | yes               | BookOrbit base URL, without credentials/query/fragment                |
+| `BOOKORBIT_SESSION_FILE`                    | SSO mode          | Private native-session file; do not also set password/token variables |
+| `BOOKORBIT_USERNAME` + `BOOKORBIT_PASSWORD` | password mode     | Existing login and refresh behavior                                   |
+| `BOOKORBIT_TOKEN`                           | token mode        | Static access token; does not auto-refresh                            |
+| `CACHE_DIR`                                 | optional          | Default `~/.cache/bookorbit-mcp`; keep private                        |
+| `MCP_TRANSPORT`                             | optional          | `stdio` (default) or `http`                                           |
+| `MCP_HOST` / `MCP_PORT`                     | optional          | Default `127.0.0.1:3000`                                              |
+| `MCP_ALLOWED_HOSTS`                         | non-loopback HTTP | Comma-separated exact Host header values, including non-default ports |
+| `SSO_PROVIDER`                              | enrollment only   | Enabled BookOrbit provider slug; optional if exactly one exists       |
+| `SSO_REDIRECT_URI`                          | enrollment only   | Existing BookOrbit HTTPS origin + `/oauth2-callback?bookorbit_mcp=1`  |
+
+HTTP is private gateway-to-connector transport, not a public authenticated API.
+Restrict it to the gateway with the existing network-policy/firewall owner.
+[Detailed deployment and native SSO enrollment](docs/gateway.md).
 
 ## Install & build
 
 ```bash
-npm install
+npm ci
 npm run build
 ```
 
@@ -139,6 +174,11 @@ or `claude mcp add`). Point at the built entry and pass your credentials:
 ```
 
 ## Development
+
+| Documentation preview         | Command                                                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Install the declared renderer | `mise install`                                                                                                           |
+| Render README diagrams        | `mise run docs-render` (uses Puppeteer's configured browser; `PUPPETEER_EXECUTABLE_PATH` can select an installed Chrome) |
 
 ```bash
 npm test          # unit tests (offline; run against captured fixtures)

@@ -40,6 +40,7 @@ function shapeBookListItem(b: BookListItem) {
     publishedYear: b.publishedYear ?? null,
     genres: b.genres ?? [],
     hasEpub: hasEpubFile(b.files),
+    hasPdf: (b.files ?? []).some((f) => f.format?.toLowerCase() === "pdf"),
   };
 }
 
@@ -73,7 +74,9 @@ function shapeAnnotation(a: Annotation) {
 
 type ToolResult = {
   content: Array<
-    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+    | { type: "resource"; resource: { uri: string; mimeType: string; blob: string } }
   >;
   isError?: boolean;
 };
@@ -119,7 +122,7 @@ export function registerTools(
       description:
         "Search the BookOrbit library by title, author, or series. Returns matching " +
         "books with their bookId and available formats. Use this first to find the " +
-        "book (and confirm it has an EPUB) before reading its text.",
+        "book (and confirm it has an EPUB or PDF) before reading its text.",
       inputSchema: {
         query: z
           .string()
@@ -147,6 +150,7 @@ export function registerTools(
             libraryName: b.libraryName,
             formats: b.formats,
             hasEpub: b.formats?.map((f) => f.toLowerCase()).includes("epub") ?? false,
+            hasPdf: b.formats?.map((f) => f.toLowerCase()).includes("pdf") ?? false,
           })),
         );
       }),
@@ -158,7 +162,7 @@ export function registerTools(
       title: "Get book details",
       description:
         "Get full metadata for one book by bookId, including its files and formats. " +
-        "Use to confirm an EPUB is available and to read the description/series info.",
+        "Use to select an EPUB or PDF file and to read the description/series info.",
       inputSchema: {
         bookId: z.number().int().describe("The book's id (from search_books)."),
       },
@@ -170,7 +174,7 @@ export function registerTools(
           bookId: b.id,
           title: b.title,
           subtitle: b.subtitle,
-          authors: b.authors,
+          authors: b.authors.map((author) => author.name),
           seriesName: b.seriesName,
           seriesIndex: b.seriesIndex,
           language: b.language,
@@ -180,13 +184,72 @@ export function registerTools(
           genres: b.genres,
           tags: b.tags,
           files: (b.files ?? []).map((f) => ({
+            fileId: f.id,
             format: f.format,
             role: f.role,
             sizeBytes: f.sizeBytes,
             filename: f.filename,
           })),
           hasEpub: (b.files ?? []).some((f) => f.format?.toLowerCase() === "epub"),
+          hasPdf: (b.files ?? []).some((f) => f.format?.toLowerCase() === "pdf"),
         });
+      }),
+  );
+
+  server.registerTool(
+    "get_book_text",
+    {
+      title: "Read whole-book text",
+      description:
+        "Read the complete EPUB/PDF text in order. Continue with nextOffset until hasMore is false; no sections are skipped. For focused reading use get_chapter. Scanned pages are explicitly flagged for OCR.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        bookId: z.number().int().positive(),
+        fileId: z.number().int().positive().optional(),
+        offset: z.number().int().min(0).optional(),
+        maxChars: z.number().int().min(1).max(MAX_ALLOWED_CHARS).optional(),
+      },
+    },
+    async ({ bookId, fileId, offset, maxChars }) =>
+      guard(async () => ok(await service.getBookText(bookId, offset, maxChars, fileId))),
+  );
+
+  server.registerTool(
+    "get_book_file",
+    {
+      title: "Fetch original whole book",
+      description:
+        "Fetch the original EPUB or PDF as an embedded MCP resource (maximum 20 MiB). Requires a fileId from get_book. This returns the file, not a public URL or credentials. Use get_book_text for readable text and continuation.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        bookId: z.number().int().positive(),
+        fileId: z.number().int().positive(),
+      },
+    },
+    async ({ bookId, fileId }) =>
+      guard(async () => {
+        const book = await client.getBook(bookId);
+        // Raw downloads also support selecting among multiple EPUB editions.
+        const file = book.files.find(
+          (f) => f.id === fileId && ["pdf", "epub"].includes(f.format.toLowerCase()),
+        );
+        if (!file) throw new Error("Choose an attached EPUB or PDF file from get_book.");
+        const data = await client.getBookFile(bookId, file.id);
+        return {
+          content: [
+            {
+              type: "resource",
+              resource: {
+                uri: `bookorbit://books/${bookId}/files/${fileId}`,
+                mimeType:
+                  file.format.toLowerCase() === "pdf"
+                    ? "application/pdf"
+                    : "application/epub+zip",
+                blob: data.toString("base64"),
+              },
+            },
+          ],
+        };
       }),
   );
 
@@ -196,19 +259,34 @@ export function registerTools(
       title: "List chapters",
       description:
         "List a book's chapters/sections with their sizes (character and word counts) " +
-        "but NO text. Parses and caches the EPUB on first call. Use this to see the " +
-        "book's structure and pick which chapter to read with get_chapter. EPUB only.",
+        "but NO text. Parses and caches an EPUB or PDF on first call. Use this to see the " +
+        "book's structure and pick which chapter to read with get_chapter. PDF outlines become sections; without an outline, each page is a section.",
       inputSchema: {
-        bookId: z.number().int().describe("The book's id (from search_books)."),
+        bookId: z
+          .number()
+          .int()
+          .positive()
+          .describe("The book's id (from search_books)."),
+        fileId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Attached EPUB/PDF fileId from get_book. Default: EPUB, otherwise PDF.",
+          ),
       },
     },
-    async ({ bookId }) =>
+    async ({ bookId, fileId }) =>
       guard(async () => {
-        const parsed = await service.getParsedBook(bookId);
+        const parsed = await service.getParsedBook(bookId, fileId);
         return ok({
           bookId: parsed.bookId,
           title: parsed.title,
           author: parsed.author,
+          fileId: parsed.fileId,
+          format: parsed.format,
+          requiresOcrPages: parsed.requiresOcrPages ?? [],
           totalChars: parsed.totalChars,
           chapterCount: parsed.sections.length,
           chapters: parsed.sections.map((s) => ({
@@ -216,6 +294,8 @@ export function registerTools(
             label: s.label,
             charCount: s.charCount,
             wordCount: s.wordCount,
+            pageStart: s.pageStart,
+            pageEnd: s.pageEnd,
           })),
         });
       }),
@@ -230,7 +310,13 @@ export function registerTools(
         "Output is capped (default ~24000 chars); if the chapter is longer, use offset " +
         "with the returned nextOffset to page through it. Read only what you need.",
       inputSchema: {
-        bookId: z.number().int().describe("The book's id."),
+        bookId: z.number().int().positive().describe("The book's id."),
+        fileId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Attached EPUB/PDF fileId from get_book."),
         chapter: z.number().int().min(0).describe("Chapter index from list_chapters."),
         offset: z
           .number()
@@ -247,9 +333,9 @@ export function registerTools(
           .describe(`Max characters to return (default ${DEFAULT_MAX_CHARS}).`),
       },
     },
-    async ({ bookId, chapter, offset, maxChars }) =>
+    async ({ bookId, fileId, chapter, offset, maxChars }) =>
       guard(async () => {
-        const parsed = await service.getParsedBook(bookId);
+        const parsed = await service.getParsedBook(bookId, fileId);
         const section = parsed.sections[chapter];
         if (!section) {
           return fail(
@@ -257,7 +343,7 @@ export function registerTools(
               `chapters (0..${parsed.sections.length - 1}).`,
           );
         }
-        const full = await service.getSectionText(bookId, chapter);
+        const full = await service.getSectionText(bookId, chapter, fileId);
         const start = Math.min(offset ?? 0, full.length);
         const cap = maxChars ?? DEFAULT_MAX_CHARS;
         const text = full.slice(start, start + cap);
@@ -267,6 +353,9 @@ export function registerTools(
           bookId,
           chapter,
           label: section.label,
+          fileId: parsed.fileId,
+          pageStart: section.pageStart,
+          pageEnd: section.pageEnd,
           text,
           offset: start,
           returnedChars: text.length,
@@ -286,7 +375,13 @@ export function registerTools(
         "index, character offset, and approximate position (percent through the book). " +
         "Use the returned chapter + offset with get_chapter to read the surrounding text.",
       inputSchema: {
-        bookId: z.number().int().describe("The book's id."),
+        bookId: z.number().int().positive().describe("The book's id."),
+        fileId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Attached EPUB/PDF fileId from get_book."),
         query: z
           .string()
           .min(1)
@@ -304,13 +399,14 @@ export function registerTools(
           .describe("Match case exactly (default false)."),
       },
     },
-    async ({ bookId, query, maxResults, caseSensitive }) =>
+    async ({ bookId, fileId, query, maxResults, caseSensitive }) =>
       guard(async () => {
         const hits = await service.searchInBook(
           bookId,
           query,
           maxResults ?? 20,
           caseSensitive ?? false,
+          fileId,
         );
         return ok({ bookId, query, hitCount: hits.length, hits });
       }),

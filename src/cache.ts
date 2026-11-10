@@ -3,29 +3,29 @@ import { join } from "node:path";
 import type { ParsedBook } from "./types.js";
 
 /**
- * Disk cache for parsed books, keyed by bookId. Layout:
- *   <baseDir>/<bookId>/book.json          -> ParsedBook metadata (sections + sizes)
- *   <baseDir>/<bookId>/text/section-NNN.txt -> extracted plain text per section
+ * Disk cache for parsed books, keyed by bookId and source revision. The caller supplies an account-isolated base directory. Layout:
+ *   <baseDir>/<bookId>/<revision>/book.json          -> ParsedBook metadata (sections + sizes)
+ *   <baseDir>/<bookId>/<revision>/text/section-NNN.txt -> extracted plain text per section
  */
 export class BookCache {
   constructor(private readonly baseDir: string) {}
 
-  private bookDir(bookId: number): string {
-    return join(this.baseDir, String(bookId));
+  private bookDir(bookId: number, key?: string): string {
+    return join(this.baseDir, String(bookId), ...(key ? [key] : []));
   }
 
-  private metaPath(bookId: number): string {
-    return join(this.bookDir(bookId), "book.json");
+  private metaPath(bookId: number, key?: string): string {
+    return join(this.bookDir(bookId, key), "book.json");
   }
 
-  private sectionPath(bookId: number, index: number): string {
+  private sectionPath(bookId: number, index: number, key?: string): string {
     const name = `section-${String(index).padStart(3, "0")}.txt`;
-    return join(this.bookDir(bookId), "text", name);
+    return join(this.bookDir(bookId, key), "text", name);
   }
 
-  async readParsed(bookId: number): Promise<ParsedBook | null> {
+  async readParsed(bookId: number, key?: string): Promise<ParsedBook | null> {
     try {
-      const raw = await readFile(this.metaPath(bookId), "utf8");
+      const raw = await readFile(this.metaPath(bookId, key), "utf8");
       return JSON.parse(raw) as ParsedBook;
     } catch (err) {
       if (isNotFound(err)) return null;
@@ -33,9 +33,13 @@ export class BookCache {
     }
   }
 
-  async readSectionText(bookId: number, index: number): Promise<string | null> {
+  async readSectionText(
+    bookId: number,
+    index: number,
+    key?: string,
+  ): Promise<string | null> {
     try {
-      return await readFile(this.sectionPath(bookId, index), "utf8");
+      return await readFile(this.sectionPath(bookId, index, key), "utf8");
     } catch (err) {
       if (isNotFound(err)) return null;
       throw err;
@@ -44,14 +48,17 @@ export class BookCache {
 
   /** Persist a fully parsed book: its metadata and every section's text. */
   async writeParsed(parsed: ParsedBook, sectionTexts: string[]): Promise<void> {
-    await mkdir(join(this.bookDir(parsed.bookId), "text"), { recursive: true });
+    await mkdir(join(this.bookDir(parsed.bookId, parsed.cacheKey), "text"), {
+      recursive: true,
+      mode: 0o700,
+    });
     await Promise.all(
       sectionTexts.map((text, i) =>
-        writeFile(this.sectionPath(parsed.bookId, i), text, "utf8"),
+        writeFile(this.sectionPath(parsed.bookId, i, parsed.cacheKey), text, "utf8"),
       ),
     );
     await writeFile(
-      this.metaPath(parsed.bookId),
+      this.metaPath(parsed.bookId, parsed.cacheKey),
       JSON.stringify(parsed, null, 2),
       "utf8",
     );

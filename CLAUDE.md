@@ -40,8 +40,8 @@ node --import tsx scripts/mcp-check.mts   # drives the BUILT server over the MCP
 ```
 
 Config comes from env (or a local `.env`, gitignored — see `.env.example`): `BOOKORBIT_URL`,
-plus either `BOOKORBIT_USERNAME`+`BOOKORBIT_PASSWORD` (preferred) or a static `BOOKORBIT_TOKEN`
-(dev only). Optional `CACHE_DIR`.
+plus one authentication mode: native `BOOKORBIT_SESSION_FILE`, password pair, or static
+`BOOKORBIT_TOKEN`. HTTP and native SSO deployment details live in `docs/gateway.md`.
 
 ## Architecture (the big picture)
 
@@ -55,7 +55,7 @@ tools.ts  ->  book-service.ts  ->  bookorbit-client.ts   (HTTP to BookOrbit)
 ```
 
 `book-service.ts` is the orchestrator; the other modules are pure/single-purpose and are
-unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
+unit-tested in isolation. Everything is keyed by **bookId** plus optional fileId; the BookOrbit EPUB reader still selects by bookId.
 
 ### Non-obvious design decisions
 
@@ -76,16 +76,19 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   via `offset`/`nextOffset`; `search_in_book` returns snippets plus a re-fetchable
   chapter+offset. Preserve these guarantees when editing tools.
 
-- **Auth is short-lived.** BookOrbit access tokens expire in ~15 minutes and there is no
+- **Auth is short-lived.** Native SSO uses BookOrbit's OIDC APIs, native refresh tokens,
+  serialized refresh and atomic private session persistence; it never uses the password fallback.
+  The existing password path is retained: BookOrbit access tokens expire in ~15 minutes and there is no
   long-lived API key. `bookorbit-client.ts` logs in with username/password, sends the JWT as a
   Bearer token, captures the `refresh_token` cookie, and on a 401 tries `/auth/refresh` then a
   full re-login (`reauthenticate`). BookOrbit's search param is `q` (not `query`), and the base
   URL is normalized to strip a trailing slash.
 
-- **Cache is build-once, per book.** First `getParsedBook(bookId)` fetches every referenced
+- **Cache is origin/account/file-revision scoped.** Current BookOrbit access is checked
+  before cached reads. Cold builds are serialized across books and de-duplicated per source.
+  Legacy book-id-only caches are not reused. The extraction steps remain: First `getParsedBook(bookId)` fetches every referenced
   spine file, extracts each section's text, computes char/word counts, and writes
-  `<CACHE_DIR>/<bookId>/book.json` + `text/section-NNN.txt`. Later calls read from disk.
-  Concurrent builds of the same book are de-duplicated via an in-flight map.
+  `<CACHE_DIR>/v2/<account>/<bookId>/<revision>/book.json` + `text/section-NNN.txt`.
 
 - **Annotations (a.k.a. notes/highlights) are a live, uncached passthrough.** Three read-only
   tools — `list_annotations` (all annotations across the library, paginated via `page`/`pageSize`

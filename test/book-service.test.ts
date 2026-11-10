@@ -25,6 +25,9 @@ const chapterXhtml = readFileSync(
 function stubClient(): { client: BookOrbitClient; fileFetches: string[] } {
   const fileFetches: string[] = [];
   const client = {
+    async getBook(id: number) {
+      return { id, files: [{ id: 1, format: "epub", sizeBytes: 123 }] };
+    },
     async getEpubInfo() {
       return info;
     },
@@ -58,9 +61,14 @@ test("parses, measures, and caches a book on first access", async () => {
   assert.ok(parsed.sections.some((s) => /Arrival/i.test(s.label)));
 
   // Cache files were written.
-  const meta = JSON.parse(await readFile(join(dir, "327", "book.json"), "utf8"));
+  const meta = JSON.parse(
+    await readFile(join(dir, "327", parsed.cacheKey!, "book.json"), "utf8"),
+  );
   assert.equal(meta.bookId, 327);
-  const section0 = await readFile(join(dir, "327", "text", "section-000.txt"), "utf8");
+  const section0 = await readFile(
+    join(dir, "327", parsed.cacheKey!, "text", "section-000.txt"),
+    "utf8",
+  );
   assert.ok(section0.length >= 0);
 });
 
