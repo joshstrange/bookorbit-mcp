@@ -1,208 +1,48 @@
-/**
- * Live end-to-end smoke test against the real BookOrbit server.
- * Uses credentials from .env. Run: node --import tsx scripts/smoke.mts
- * Not part of the unit suite (hits the network).
- */
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+/** Read-only live check. Emits counts/status only, never titles, excerpts or credentials. */
+import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
 import { BookOrbitClient } from "../src/bookorbit-client.js";
-import { BookCache } from "../src/cache.js";
 import { BookService } from "../src/book-service.js";
+import { BookCache } from "../src/cache.js";
 
-const envPath = join(process.cwd(), ".env");
-if (existsSync(envPath)) (process as any).loadEnvFile?.(envPath);
-
-const config = loadConfig();
-const client = new BookOrbitClient(config.client);
-const cacheDir = await mkdtemp(join(tmpdir(), "bookorbit-smoke-"));
-const service = new BookService(client, new BookCache(cacheDir));
-
-console.log("1) search_books('Absolution')");
-const results = await client.searchBooks("Absolution", 3);
-console.log(results.map((b) => ({ id: b.id, title: b.title, formats: b.formats })));
-const book = results.find((b) => b.formats?.includes("epub")) ?? results[0];
-if (!book) throw new Error("no book found");
-
-console.log(`\n2) list_chapters (build+cache) for bookId=${book.id}`);
-const t0 = Date.now();
-const parsed = await service.getParsedBook(book.id);
-console.log(`   title=${parsed.title} author=${parsed.author}`);
+const client = new BookOrbitClient(loadConfig().client);
+const info = (await client.getAppInfo()) as { version: string };
+assert.equal(typeof info.version, "string");
+console.log(JSON.stringify({ check: "app-info", version: info.version }));
+const page = await client.queryBooks({ page: 0, size: 10 });
+assert.equal(page.page, 0);
+assert.ok(page.items.length <= 10 && page.total >= page.items.length);
 console.log(
-  `   chapters=${parsed.sections.length} totalChars=${parsed.totalChars} in ${Date.now() - t0}ms`,
+  JSON.stringify({
+    check: "catalog",
+    count: page.items.length,
+    total: page.total,
+    page: page.page,
+  }),
 );
-console.log("   first 8 chapters:");
-for (const s of parsed.sections.slice(0, 8)) {
-  console.log(
-    `     [${s.index}] ${s.label}  (${s.charCount} chars, ${s.wordCount} words)`,
-  );
-}
-
-const biggest = parsed.sections.reduce((a, b) => (b.charCount > a.charCount ? b : a));
+const bookId =
+  Number(process.env.BOOKORBIT_CHECK_BOOK_ID) ||
+  page.items.find((b) => b.files?.some((f) => f.format?.toLowerCase() === "epub"))?.id;
+assert.ok(bookId, "Choose an EPUB book with BOOKORBIT_CHECK_BOOK_ID.");
+const service = new BookService(client, new BookCache());
+const parsed = await service.getParsedBook(bookId);
+assert.ok(parsed.sections.length > 0 && parsed.totalChars > 0);
+const text = await service.getSectionText(
+  bookId,
+  parsed.sections.find((s) => s.charCount > 0)!.index,
+);
+assert.ok(text.length > 0);
+const hits = await service.searchInBook(bookId, text.slice(0, 12), 2);
+assert.ok(hits.length > 0 && hits.length <= 2);
+await service.getParsedBook(bookId);
 console.log(
-  `\n3) get_chapter chapter=${biggest.index} ('${biggest.label}') first 300 chars:`,
+  JSON.stringify({
+    check: "reader-and-revalidated-cache",
+    bookId,
+    fileId: parsed.fileId,
+    chapters: parsed.sections.length,
+    totalChars: parsed.totalChars,
+    hits: hits.length,
+  }),
 );
-const text = await service.getSectionText(book.id, biggest.index);
-console.log("   " + JSON.stringify(text.slice(0, 300)));
-
-const term = "Area X";
-console.log(`\n4) search_in_book('${term}')`);
-const hits = await service.searchInBook(book.id, term, 5);
-console.log(`   ${hits.length} hits`);
-for (const h of hits) {
-  console.log(
-    `     ch${h.sectionIndex} @${h.charOffset} (${h.approxBookPercent}%): ${h.snippet.slice(0, 120)}`,
-  );
-}
-
-console.log("\n5) cache hit (no rebuild):");
-const t1 = Date.now();
-await service.getParsedBook(book.id);
-console.log(`   re-read in ${Date.now() - t1}ms`);
-
-console.log("\n6) discovery & browse");
-const series = await client.listSeries({ size: 3 });
-console.log(`   series: ${series.total} total; first: ${series.items[0]?.name}`);
-if (series.items[0]) {
-  const seriesBooks = await client.getSeriesBooks(series.items[0].id, { size: 3 });
-  console.log(
-    `   series-books[${series.items[0].id}]: ${seriesBooks.items
-      .map((b) => `${b.title}#${b.seriesIndex}`)
-      .join(", ")}`,
-  );
-}
-const authors = await client.listAuthors({ size: 3 });
-console.log(`   authors: ${authors.total} total; first: ${authors.items[0]?.name}`);
-if (authors.items[0]) {
-  const author = await client.getAuthor(authors.items[0].id);
-  console.log(`   author bio: ${(author.description ?? "(none)").slice(0, 80)}...`);
-}
-const collections = await client.listCollections();
-const scopes = await client.listSmartScopes();
-console.log(`   collections: ${collections.length}; smart scopes: ${scopes.length}`);
-
-console.log(`\n7) related books for bookId=${book.id}`);
-for (const kind of ["similar", "same_series", "same_author"] as const) {
-  const related = await client.getRelatedBooks(book.id, kind);
-  console.log(`   ${kind}: ${related.length} (e.g. ${related[0]?.title ?? "-"})`);
-}
-
-console.log(`\n8) reading state for bookId=${book.id}`);
-const progress = await client.getReadingProgress(book.id);
-console.log(
-  `   progress: ${progress.map((p) => `${Math.round((p.percentage ?? 0) * 100)}%`).join(", ") || "(none)"}`,
-);
-const reading = await client.listCurrentlyReading();
-console.log(`   currently reading: ${reading.books?.length ?? 0} book(s)`);
-const sessions = await client.getReadingSessions(book.id, { pageSize: 3 });
-console.log(
-  `   sessions: ${sessions.stats.totalSessions} total, ${sessions.stats.totalSeconds}s read`,
-);
-
-console.log("\n9) statistics & libraries");
-const stats = await client.getStatisticsSummary();
-console.log(
-  `   library: ${stats.totalBooks} books, ${stats.totalAuthors} authors, ${stats.totalSeries} series`,
-);
-const userStats = await client.getUserStatisticsSummary();
-console.log(
-  `   reading: ${userStats.completedBooks}/${userStats.trackedBooks} completed, mean ${userStats.meanProgressPercent}%`,
-);
-const libraries = await client.listLibraries();
-for (const lib of libraries) {
-  const ls = await client.getLibraryStats(lib.id);
-  console.log(`   library "${lib.name}": ${ls.totalBooks} books`);
-}
-
-console.log("\n10) metadata typeahead (suggest_metadata)");
-for (const kind of ["authors", "genres"] as const) {
-  const matches = (await client.suggestMetadata(kind, "a")) as Array<{ name: string }>;
-  console.log(
-    `   ${kind}?q=a → ${matches.length} match(es)` +
-      (matches[0] ? `, e.g. "${matches[0].name}"` : ""),
-  );
-}
-
-console.log("\n11) library statistic (get_library_statistic)");
-const topAuthors = (await client.getLibraryStatistic("top-authors")) as {
-  items: Array<{ name: string; count: number }>;
-};
-console.log(
-  `   top-authors → ${topAuthors.items.length} rows` +
-    (topAuthors.items[0]
-      ? `, top: "${topAuthors.items[0].name}" (${topAuthors.items[0].count})`
-      : ""),
-);
-const formats = (await client.getLibraryStatistic("format-distribution")) as {
-  items: Array<{ format: string; count: number }>;
-};
-console.log(
-  `   format-distribution → ${formats.items.map((i) => `${i.format}:${i.count}`).join(", ")}`,
-);
-
-console.log("\n12) reading statistic (get_reading_statistic)");
-const peak = (await client.getUserStatistic("peak-hours", { days: 365 })) as Array<{
-  hour: number;
-  readingSeconds: number;
-}>;
-const busiest = peak.reduce(
-  (a, b) => (b.readingSeconds > a.readingSeconds ? b : a),
-  peak[0],
-);
-console.log(
-  `   peak-hours → ${peak.length} hours` +
-    (busiest ? `, busiest hour ${busiest.hour} (${busiest.readingSeconds}s)` : ""),
-);
-const goal = (await client.getUserStatistic("goal-trajectory", { goalBooks: 24 })) as {
-  goalBooks: number;
-  points: unknown[];
-};
-console.log(`   goal-trajectory (24/yr) → ${goal.points.length} monthly points`);
-
-console.log("\n13) dashboard widgets (get_dashboard_widget)");
-const streak = (await client.getDashboardWidget("reading-streak")) as {
-  currentStreak?: number;
-  longestStreak?: number;
-};
-console.log(
-  `   reading-streak → current ${streak.currentStreak ?? "?"}, longest ${streak.longestStreak ?? "?"}`,
-);
-const overview = (await client.getDashboardWidget("library-overview")) as {
-  totalBooks?: number;
-};
-console.log(`   library-overview → ${overview.totalBooks ?? "?"} books`);
-
-console.log("\n14) book shelf (get_book_shelf)");
-const shelf = await client.getBookShelf("recently-added", { limit: 5 });
-console.log(
-  `   recently-added → ${shelf.length} book(s)` +
-    (shelf[0] ? `, newest: "${shelf[0].title}"` : ""),
-);
-
-console.log("\n15) collection detail + author metadata search");
-if (collections[0]) {
-  const col = (await client.getCollection(collections[0].id)) as { name?: string };
-  console.log(`   collection[${collections[0].id}] → "${col.name ?? "?"}"`);
-} else {
-  console.log("   (no collections to fetch)");
-}
-const authorHits = (await client.searchAuthorMetadata("tolkien", {
-  limit: 3,
-})) as unknown[];
-console.log(
-  `   search_author_metadata("tolkien") → ${Array.isArray(authorHits) ? authorHits.length : "?"} candidate(s)`,
-);
-
-console.log("\n16) cover image (get_book_cover)");
-try {
-  const cover = await client.getBookCover(book.id, "thumbnail");
-  console.log(
-    `   book ${book.id} thumbnail → ${cover.data.length} bytes, ${cover.contentType}`,
-  );
-} catch (err) {
-  console.log(`   book ${book.id} thumbnail → ${(err as Error).message}`);
-}
-
-console.log("\nSMOKE OK");
+console.log("SMOKE OK");

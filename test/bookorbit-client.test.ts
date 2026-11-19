@@ -95,7 +95,7 @@ test("logs in with credentials, captures refresh cookie, retries on 401", async 
   );
 });
 
-test("throws BookOrbitError with server message on non-2xx", async () => {
+test("throws BookOrbitError without echoing server body on non-2xx", async () => {
   const { fetch } = mockFetch(() =>
     json({ message: ["q must be a string"] }, { status: 400 }),
   );
@@ -109,7 +109,8 @@ test("throws BookOrbitError with server message on non-2xx", async () => {
     (err: unknown) =>
       err instanceof BookOrbitError &&
       err.status === 400 &&
-      /q must be a string/.test(err.message),
+      /Upstream HTTP 400/.test(err.message) &&
+      !err.message.includes("q must be a string"),
   );
 });
 

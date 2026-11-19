@@ -30,7 +30,7 @@ node --import tsx --test --test-name-pattern="paginates" test/tools.test.ts
 CI (`.github/workflows/ci.yml`) runs, in order: format:check → lint → typecheck → test → build.
 Keep all five green.
 
-### Live checks (need a real server; read `.env`)
+### Live checks (need a real server; inject credentials at launch)
 
 These hit a real BookOrbit instance and are **not** part of `npm test`:
 
@@ -39,9 +39,12 @@ node --import tsx scripts/smoke.mts      # search -> parse -> chapter -> in-book
 node --import tsx scripts/mcp-check.mts   # drives the BUILT server over the MCP stdio protocol
 ```
 
-Config comes from env (or a local `.env`, gitignored — see `.env.example`): `BOOKORBIT_URL`,
-plus either `BOOKORBIT_USERNAME`+`BOOKORBIT_PASSWORD` (preferred) or a static `BOOKORBIT_TOKEN`
-(dev only). Optional `CACHE_DIR`.
+Config comes from the process environment (see `.env.example`): `BOOKORBIT_URL` and preferably
+`BOOKORBIT_API_KEY`. `BOOKORBIT_TOKEN` remains static Bearer compatibility. Legacy login requires
+explicit `BOOKORBIT_AUTH_MODE=password`, username/password, and no selected key/token. A selected
+key/token never falls back to account login. Inject secrets at launch; `CACHE_DIR` is no longer used.
+Live checks print only status, IDs and counts, not titles or text. Optional `BOOKORBIT_CHECK_BOOK_ID`
+selects an EPUB without hard-coding a private query/title.
 
 ## Architecture (the big picture)
 
@@ -51,11 +54,12 @@ Request flow for a tool call:
 tools.ts  ->  book-service.ts  ->  bookorbit-client.ts   (HTTP to BookOrbit)
                      |          ->  epub-structure.ts     (TOC/spine -> sections)
                      |          ->  html-to-text.ts       (XHTML slice -> text)
-                     +--------->  cache.ts                (disk, per bookId)
+                     +--------->  cache.ts                (bounded memory, isolated per service)
 ```
 
 `book-service.ts` is the orchestrator; the other modules are pure/single-purpose and are
-unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
+unit-tested in isolation. Tools address **bookId**; content requests pin the selected EPUB
+**fileId** and revalidate its version and access before returning text.
 
 ### Non-obvious design decisions
 
@@ -76,16 +80,20 @@ unit-tested in isolation. Everything is keyed by **bookId**, not fileId.
   via `offset`/`nextOffset`; `search_in_book` returns snippets plus a re-fetchable
   chapter+offset. Preserve these guarantees when editing tools.
 
-- **Auth is short-lived.** BookOrbit access tokens expire in ~15 minutes and there is no
-  long-lived API key. `bookorbit-client.ts` logs in with username/password, sends the JWT as a
-  Bearer token, captures the `refresh_token` cookie, and on a 401 tries `/auth/refresh` then a
-  full re-login (`reauthenticate`). BookOrbit's search param is `q` (not `query`), and the base
-  URL is normalized to strip a trailing slash.
+- **Native scoped API keys are preferred.** Key and static-token modes send a Bearer without
+  refresh or password fallback. Only explicit legacy password mode captures a refresh cookie
+  and may refresh/re-login. BookOrbit's search param is `q` (not `query`), and the base URL is
+  normalized to strip a trailing slash. `browse_books` uses read-safe `POST /books/query` with
+  nested `pagination` and accepts HTTP201. Catalog pages start0; annotation/session pages start1.
 
-- **Cache is build-once, per book.** First `getParsedBook(bookId)` fetches every referenced
-  spine file, extracts each section's text, computes char/word counts, and writes
-  `<CACHE_DIR>/<bookId>/book.json` + `text/section-NNN.txt`. Later calls read from disk.
-  Concurrent builds of the same book are de-duplicated via an in-flight map.
+- **Cache is bounded process memory, not disk.** Each content operation revalidates live book
+  and pinned EPUB access, comparing file/version, metadata and structure. Missing file-version
+  evidence forces rebuilding; denials or network failures purge cached data and fail closed.
+  Retain at most four books/32MiB serialized text and metadata. Builds deduplicate concurrent
+  work and use at most three parallel spine fetches,500 files/2000 sections,16MiB aggregate
+  XHTML and16MiB extracted characters. HTTP deadlines cover headers and streaming body
+  (15seconds), responses cap8MiB, and redirects are refused. No persistent mode is provided;
+  old disk caches are neither read nor automatically deleted.
 
 - **Annotations (a.k.a. notes/highlights) are a live, uncached passthrough.** Three read-only
   tools — `list_annotations` (all annotations across the library, paginated via `page`/`pageSize`
@@ -134,15 +142,18 @@ author-books` via a `kind` arg), `list_series` / `get_series_books`, `list_autho
     (`GET /dashboard/scrollers/{type}` — 7 curated shelves: recently-added, continue-reading/
     listening, want-to-read, up-next-in-series, random, smart-scope; `type` enum
     `BOOK_SHELF_TYPES`, trimmed by `shapeBookListItem`). `smart-scope` requires a `smartScopeId`
-    (validated tool-side; from `list_smart_scopes`).
+    (validated tool-side; from `list_smart_scopes`). Current shelf envelopes `{books,total}`
+    are normalized by the client. App Attest widgets explicitly error for native API keys; no
+    fabricated empty results or password downgrade. `get_smart_scope_books` uses read-safe
+    `POST /smart-scopes/{id}/books/query`, the same query service as the server GET wrapper.
   - _Images (the only non-text tools):_ `get_book_cover` (`GET /books/{id}/cover|thumbnail`) and
     `get_author_image` (`GET /authors/{id}/image|thumbnail`) return an MCP **image** content block
     (base64 via `okImage` in `tools.ts`), not JSON. The client's `getImage` reads bytes off
     `authFetch` (which throws `BookOrbitError` on a 404 → "no cover"). A `size` arg picks
     full/thumbnail. This is the server's only departure from text-only output.
-  - **Two pagination conventions:** the browse endpoints use `page`/`size` (helpers `pageParams`/
-    `pageQuery` in `bookorbit-client.ts`), but `/books/{id}/sessions` uses `page`/`pageSize` — do
-    not unify them. The browse `/books` endpoints (`series`, `authors`, `collections`, `smart-
+  - **Two pagination conventions:** browse uses zero-based `page`/`size`; annotations and
+    `/books/{id}/sessions` use one-based `page`/`pageSize`. Preserve endpoint-specific names
+    and defaults; do not unify them. The browse `/books` endpoints (`series`, `authors`, `collections`, `smart-
 scopes`) all return the same rich item, trimmed by `shapeBookListItem` in `tools.ts`; related-
     books arrays are lighter, trimmed by `shapeRelatedBook`. `get_reading_progress` explicitly
     drops the `kobo*` fields.
@@ -166,4 +177,4 @@ navigation — discovery/browse (series, authors, collections, smart scopes, rel
 libraries), reading state (progress, currently-reading, sessions), and statistics — see the
 tools above. Out of scope by design: RAG/embeddings, cross-library content search, PDF/MOBI
 _text extraction_, bookmarks, and any write operations (including creating/editing annotations).
-The cache layout leaves room for a later cross-book index.
+No cross-book index is built.

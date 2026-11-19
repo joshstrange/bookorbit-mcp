@@ -36,6 +36,9 @@ export interface PageOpts {
 
 export interface ClientConfig {
   baseUrl: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
   username?: string;
   password?: string;
   /** Static Bearer token (dev only; not auto-refreshed). */
@@ -67,13 +70,38 @@ export class BookOrbitClient {
   private refreshCookie: string | null = null;
 
   constructor(private readonly config: ClientConfig) {
+    if (config.apiKey !== undefined && !config.apiKey.trim())
+      throw new Error("API key is empty.");
+    if (config.token !== undefined && !config.token.trim())
+      throw new Error("Static token is empty.");
+    for (const limit of [config.timeoutMs, config.maxResponseBytes]) {
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1))
+        throw new Error("Request limits must be positive integers.");
+    }
     this.apiBase = `${config.baseUrl.replace(/\/+$/, "")}/api/v1`;
     this.fetchImpl = config.fetchImpl ?? fetch;
-    this.accessToken = config.token ?? null;
+    const url = new URL(config.baseUrl);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error(
+        "BOOKORBIT_URL must be an HTTP(S) URL without credentials, query or fragment.",
+      );
+    }
+    this.accessToken = config.apiKey ?? config.token ?? null;
   }
 
   private get canReauthenticate(): boolean {
-    return Boolean(this.config.username && this.config.password);
+    return Boolean(
+      !this.config.apiKey &&
+      !this.config.token &&
+      this.config.username &&
+      this.config.password,
+    );
   }
 
   async searchBooks(query: string, limit?: number): Promise<BookSearchResult[]> {
@@ -83,16 +111,63 @@ export class BookOrbitClient {
   }
 
   async getBook(id: number): Promise<BookDetail> {
-    return this.getJson<BookDetail>(`/books/${id}`);
+    const book = await this.getJson<BookDetail>(`/books/${id}`);
+    return {
+      ...book,
+      authors: book.authors.map((a) =>
+        typeof a === "string" ? a : (a as { name: string }).name,
+      ),
+    };
   }
 
-  async getEpubInfo(bookId: number): Promise<EpubInfo> {
-    return this.getJson<EpubInfo>(`/epub/${bookId}/info`);
+  /** Browse with the released API's explicitly read-safe catalog query POST. */
+  async queryBooks(
+    opts: { q?: string; page?: number; size?: number } = {},
+  ): Promise<Paged<BookListItem>> {
+    if (
+      !Number.isInteger(opts.page ?? 0) ||
+      (opts.page ?? 0) < 0 ||
+      !Number.isInteger(opts.size ?? 20) ||
+      (opts.size ?? 20) < 1 ||
+      (opts.size ?? 20) > 100
+    )
+      throw new Error("Invalid catalog pagination.");
+    const res = await this.authFetch("/books/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        q: opts.q,
+        pagination: { page: opts.page ?? 0, size: opts.size ?? 20 },
+      }),
+    });
+    return this.parseJson<Paged<BookListItem>>(res, "/books/query");
+  }
+
+  async getAppInfo(): Promise<unknown> {
+    return this.getJson("/app-info");
+  }
+
+  async getEpubInfo(bookId: number, fileId?: number): Promise<EpubInfo> {
+    return this.getJson<EpubInfo>(
+      `/epub/${bookId}/info${fileId == null ? "" : `?fileId=${fileId}`}`,
+    );
   }
 
   /** Fetch one internal EPUB file (e.g. a chapter's XHTML) as text. */
-  async getEpubFile(bookId: number, internalPath: string): Promise<string> {
-    const res = await this.authFetch(`/epub/${bookId}/file/${encodePath(internalPath)}`);
+  async getEpubFile(
+    bookId: number,
+    internalPath: string,
+    fileId?: number,
+  ): Promise<string> {
+    if (
+      internalPath.split("/").some((p) => p === ".." || p === ".") ||
+      internalPath.includes("\\") ||
+      internalPath.startsWith("/")
+    )
+      throw new Error("Invalid internal EPUB path.");
+    const res = await this.authFetch(
+      `/epub/${bookId}/file/${encodePath(internalPath)}${fileId == null ? "" : `?fileId=${fileId}`}`,
+    );
     return res.text();
   }
 
@@ -112,6 +187,8 @@ export class BookOrbitClient {
     pageSize?: number;
     bookId?: number;
   }): Promise<AnnotationHubPage> {
+    if (opts?.page != null && (!Number.isInteger(opts.page) || opts.page < 1))
+      throw new Error("Annotations use one-based pages.");
     const params = new URLSearchParams();
     if (opts?.page != null) params.set("page", String(opts.page));
     if (opts?.pageSize != null) params.set("pageSize", String(opts.pageSize));
@@ -191,9 +268,21 @@ export class BookOrbitClient {
     scopeId: number,
     opts?: PageOpts & { q?: string },
   ): Promise<Paged<BookListItem>> {
-    const params = pageParams(opts);
-    if (opts?.q != null) params.set("q", opts.q);
-    return this.getJson<Paged<BookListItem>>(`/smart-scopes/${scopeId}/books?${params}`);
+    // The GET requires App Attest in v3.8.0; this explicitly read-safe POST
+    // invokes the same service query without changing the key's permissions.
+    const res = await this.authFetch(`/smart-scopes/${scopeId}/books/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        q: opts?.q,
+        sort: [],
+        pagination: { page: opts?.page ?? 0, size: opts?.size ?? 20 },
+      }),
+    });
+    return this.parseJson<Paged<BookListItem>>(
+      res,
+      `/smart-scopes/${scopeId}/books/query`,
+    );
   }
 
   // --- reading state (live, uncached) --------------------------------------
@@ -314,9 +403,18 @@ export class BookOrbitClient {
     if (opts?.limit != null) params.set("limit", String(opts.limit));
     if (opts?.smartScopeId != null) params.set("smartScopeId", String(opts.smartScopeId));
     const qs = params.toString();
-    return this.getJson<BookListItem[]>(
-      `/dashboard/scrollers/${type}${qs ? `?${qs}` : ""}`,
-    );
+    const result = await this.getJson<
+      BookListItem[] | { books: BookListItem[]; total: number | null }
+    >(`/dashboard/scrollers/${type}${qs ? `?${qs}` : ""}`);
+    // Current releases return { books, total }; retain older bare-array compatibility.
+    const books = Array.isArray(result) ? result : result.books;
+    if (!Array.isArray(books))
+      throw new BookOrbitError(
+        "Invalid shelf response.",
+        200,
+        `/dashboard/scrollers/${type}`,
+      );
+    return books;
   }
 
   /** One collection's detail (companion to getCollectionBooks). */
@@ -379,7 +477,15 @@ export class BookOrbitClient {
 
   private async getJson<T>(path: string): Promise<T> {
     const res = await this.authFetch(path);
-    return (await res.json()) as T;
+    return this.parseJson<T>(res, path);
+  }
+
+  private async parseJson<T>(res: Response, path: string): Promise<T> {
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new BookOrbitError("Invalid JSON response.", res.status, path.split("?")[0]);
+    }
   }
 
   /** Fetch with Bearer auth, refreshing / re-logging in once on a 401. */
@@ -394,15 +500,102 @@ export class BookOrbitClient {
 
     if (!res.ok) {
       const message = await this.extractError(res);
-      throw new BookOrbitError(message, res.status, path);
+      throw new BookOrbitError(message, res.status, path.split("?")[0]);
     }
     return res;
   }
 
   private async rawFetch(path: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
-    if (this.accessToken) headers.set("Authorization", `Bearer ${this.accessToken}`);
-    return this.fetchImpl(`${this.apiBase}${path}`, { ...init, headers });
+    try {
+      if (this.accessToken) headers.set("Authorization", `Bearer ${this.accessToken}`);
+    } catch {
+      throw new BookOrbitError("Invalid credential header.", 0, path.split("?")[0]);
+    }
+    return this.boundedFetch(path, { ...init, headers });
+  }
+
+  /** Deadline includes streamed body consumption; never follow credential-bearing redirects. */
+  private async boundedFetch(path: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, controller.signal])
+      : controller.signal;
+    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 15_000);
+    const cap = this.config.maxResponseBytes ?? 8 * 1024 * 1024;
+    try {
+      const res = await this.fetchImpl(`${this.apiBase}${path}`, {
+        ...init,
+        redirect: "error",
+        signal,
+        cache: "no-store",
+      });
+      if (res.status >= 300 && res.status < 400)
+        throw new BookOrbitError("Redirect refused.", res.status, path.split("?")[0]);
+      if (Number(res.headers.get("content-length")) > cap) {
+        await res.body?.cancel();
+        throw new BookOrbitError(
+          "Response exceeds byte limit.",
+          res.status,
+          path.split("?")[0],
+        );
+      }
+      const reader = res.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      if (reader) {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            bytes += value.byteLength;
+            if (bytes > cap) {
+              await reader.cancel();
+              throw new BookOrbitError(
+                "Response exceeds byte limit.",
+                res.status,
+                path.split("?")[0],
+              );
+            }
+            chunks.push(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+      return new Response(
+        res.status === 204 || res.status === 205 || res.status === 304
+          ? null
+          : Buffer.concat(chunks),
+        { status: res.status, statusText: res.statusText, headers: res.headers },
+      );
+    } catch (err) {
+      if (err instanceof BookOrbitError) throw err;
+      const code = (err as { cause?: { code?: string } })?.cause?.code;
+      const safeCode =
+        code &&
+        [
+          "ECONNREFUSED",
+          "ECONNRESET",
+          "ETIMEDOUT",
+          "ENOTFOUND",
+          "EHOSTUNREACH",
+          "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+          "SELF_SIGNED_CERT_IN_CHAIN",
+          "UND_ERR_CONNECT_TIMEOUT",
+        ].includes(code)
+          ? ` (${code})`
+          : "";
+      throw new BookOrbitError(
+        signal.aborted
+          ? "Request timed out or cancelled."
+          : `Request failed (network, TLS, or redirect)${safeCode}.`,
+        0,
+        path.split("?")[0],
+      );
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Try a token refresh, falling back to a full re-login. Returns success. */
@@ -423,7 +616,7 @@ export class BookOrbitClient {
   }
 
   private async login(): Promise<void> {
-    const res = await this.fetchImpl(`${this.apiBase}/auth/login`, {
+    const res = await this.boundedFetch("/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -438,7 +631,7 @@ export class BookOrbitClient {
         "/auth/login",
       );
     }
-    const body = (await res.json()) as { accessToken: string };
+    const body = await this.parseJson<{ accessToken: string }>(res, "/auth");
     this.accessToken = body.accessToken;
     this.captureRefreshCookie(res);
   }
@@ -446,14 +639,14 @@ export class BookOrbitClient {
   private async refresh(): Promise<void> {
     const headers = new Headers({ "Content-Type": "application/json" });
     if (this.refreshCookie) headers.set("Cookie", `refresh_token=${this.refreshCookie}`);
-    const res = await this.fetchImpl(`${this.apiBase}/auth/refresh`, {
+    const res = await this.boundedFetch("/auth/refresh", {
       method: "POST",
       headers,
     });
     if (!res.ok) {
       throw new BookOrbitError("Token refresh failed", res.status, "/auth/refresh");
     }
-    const body = (await res.json()) as { accessToken: string };
+    const body = await this.parseJson<{ accessToken: string }>(res, "/auth");
     this.accessToken = body.accessToken;
     this.captureRefreshCookie(res);
   }
@@ -467,15 +660,12 @@ export class BookOrbitClient {
   }
 
   private async extractError(res: Response): Promise<string> {
-    try {
-      const body = (await res.json()) as { message?: string | string[] };
-      const msg = body.message;
-      if (Array.isArray(msg)) return msg.join("; ");
-      if (msg) return msg;
-    } catch {
-      // non-JSON body
-    }
-    return `${res.status} ${res.statusText}`;
+    // Do not echo upstream bodies: they can contain credentials, private data or HTML.
+    if (res.status === 401)
+      return "Authentication rejected; check credential expiry or revocation.";
+    if (res.status === 403)
+      return "Access denied by server scope, permission or App Attest policy; no credential fallback.";
+    return `Upstream HTTP ${res.status}.`;
   }
 }
 

@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
 
   const client = new BookOrbitClient(config.client);
-  const cache = new BookCache(config.cacheDir);
+  const cache = new BookCache();
   const service = new BookService(client, cache);
 
   const server = new McpServer({

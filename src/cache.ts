@@ -1,63 +1,50 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { ParsedBook } from "./types.js";
 
-/**
- * Disk cache for parsed books, keyed by bookId. Layout:
- *   <baseDir>/<bookId>/book.json          -> ParsedBook metadata (sections + sizes)
- *   <baseDir>/<bookId>/text/section-NNN.txt -> extracted plain text per section
- */
+/** Process-local only. No extracted content is ever read from or written to disk. */
 export class BookCache {
-  constructor(private readonly baseDir: string) {}
+  private entries = new Map<
+    string,
+    { parsed: ParsedBook; texts: string[]; bytes: number }
+  >();
+  constructor(private readonly maxBytes = 32 * 1024 * 1024) {}
 
-  private bookDir(bookId: number): string {
-    return join(this.baseDir, String(bookId));
+  private key(bookId: number, namespace: string): string {
+    return `${namespace}:${bookId}`;
   }
 
-  private metaPath(bookId: number): string {
-    return join(this.bookDir(bookId), "book.json");
+  async readParsed(bookId: number, namespace = ""): Promise<ParsedBook | null> {
+    return this.entries.get(this.key(bookId, namespace))?.parsed ?? null;
   }
 
-  private sectionPath(bookId: number, index: number): string {
-    const name = `section-${String(index).padStart(3, "0")}.txt`;
-    return join(this.bookDir(bookId), "text", name);
+  async readSectionText(
+    bookId: number,
+    index: number,
+    namespace = "",
+    expected?: ParsedBook,
+  ): Promise<string | null> {
+    const entry = this.entries.get(this.key(bookId, namespace));
+    if (expected && entry?.parsed !== expected)
+      throw new Error("Book cache changed during read; retry the operation.");
+    return entry?.texts[index] ?? null;
   }
 
-  async readParsed(bookId: number): Promise<ParsedBook | null> {
-    try {
-      const raw = await readFile(this.metaPath(bookId), "utf8");
-      return JSON.parse(raw) as ParsedBook;
-    } catch (err) {
-      if (isNotFound(err)) return null;
-      throw err;
+  async delete(bookId: number, namespace = ""): Promise<void> {
+    this.entries.delete(this.key(bookId, namespace));
+  }
+
+  async writeParsed(parsed: ParsedBook, texts: string[], namespace = ""): Promise<void> {
+    const bytes =
+      Buffer.byteLength(JSON.stringify(parsed)) +
+      texts.reduce((n, t) => n + Buffer.byteLength(t), 0);
+    if (bytes > this.maxBytes) throw new Error("Parsed book exceeds memory cache limit.");
+    const key = this.key(parsed.bookId, namespace);
+    this.entries.delete(key);
+    while (
+      this.entries.size >= 4 ||
+      [...this.entries.values()].reduce((n, e) => n + e.bytes, bytes) > this.maxBytes
+    ) {
+      this.entries.delete(this.entries.keys().next().value!);
     }
+    this.entries.set(key, { parsed, texts: [...texts], bytes });
   }
-
-  async readSectionText(bookId: number, index: number): Promise<string | null> {
-    try {
-      return await readFile(this.sectionPath(bookId, index), "utf8");
-    } catch (err) {
-      if (isNotFound(err)) return null;
-      throw err;
-    }
-  }
-
-  /** Persist a fully parsed book: its metadata and every section's text. */
-  async writeParsed(parsed: ParsedBook, sectionTexts: string[]): Promise<void> {
-    await mkdir(join(this.bookDir(parsed.bookId), "text"), { recursive: true });
-    await Promise.all(
-      sectionTexts.map((text, i) =>
-        writeFile(this.sectionPath(parsed.bookId, i), text, "utf8"),
-      ),
-    );
-    await writeFile(
-      this.metaPath(parsed.bookId),
-      JSON.stringify(parsed, null, 2),
-      "utf8",
-    );
-  }
-}
-
-function isNotFound(err: unknown): boolean {
-  return (err as NodeJS.ErrnoException)?.code === "ENOENT";
 }

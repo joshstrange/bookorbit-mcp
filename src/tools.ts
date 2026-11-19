@@ -130,7 +130,7 @@ export function registerTools(
           .number()
           .int()
           .min(1)
-          .max(50)
+          .max(20)
           .optional()
           .describe("Max results (default server-side)."),
       },
@@ -149,6 +149,25 @@ export function registerTools(
             hasEpub: b.formats?.map((f) => f.toLowerCase()).includes("epub") ?? false,
           })),
         );
+      }),
+  );
+
+  server.registerTool(
+    "browse_books",
+    {
+      title: "Browse books",
+      description:
+        "Browse one bounded zero-based catalog page using the read-safe BookOrbit query endpoint. No book content is indexed.",
+      inputSchema: {
+        query: z.string().max(200).optional(),
+        page: z.number().int().min(0).optional(),
+        size: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    async ({ query, page, size }) =>
+      guard(async () => {
+        const res = await client.queryBooks({ q: query, page, size });
+        return ok({ ...res, items: res.items.map(shapeBookListItem) });
       }),
   );
 
@@ -180,6 +199,7 @@ export function registerTools(
           genres: b.genres,
           tags: b.tags,
           files: (b.files ?? []).map((f) => ({
+            fileId: f.id,
             format: f.format,
             role: f.role,
             sizeBytes: f.sizeBytes,
@@ -207,12 +227,16 @@ export function registerTools(
         const parsed = await service.getParsedBook(bookId);
         return ok({
           bookId: parsed.bookId,
+          fileId: parsed.fileId,
           title: parsed.title,
           author: parsed.author,
           totalChars: parsed.totalChars,
           chapterCount: parsed.sections.length,
           chapters: parsed.sections.map((s) => ({
             chapter: s.index,
+            spineHref: s.spineHref,
+            startAnchor: s.startAnchor,
+            endAnchor: s.endAnchor,
             label: s.label,
             charCount: s.charCount,
             wordCount: s.wordCount,
@@ -249,7 +273,7 @@ export function registerTools(
     },
     async ({ bookId, chapter, offset, maxChars }) =>
       guard(async () => {
-        const parsed = await service.getParsedBook(bookId);
+        const { parsed, text: full } = await service.getSection(bookId, chapter);
         const section = parsed.sections[chapter];
         if (!section) {
           return fail(
@@ -257,7 +281,7 @@ export function registerTools(
               `chapters (0..${parsed.sections.length - 1}).`,
           );
         }
-        const full = await service.getSectionText(bookId, chapter);
+
         const start = Math.min(offset ?? 0, full.length);
         const cap = maxChars ?? DEFAULT_MAX_CHARS;
         const text = full.slice(start, start + cap);
@@ -266,6 +290,10 @@ export function registerTools(
         return ok({
           bookId,
           chapter,
+          fileId: parsed.fileId,
+          spineHref: section.spineHref,
+          startAnchor: section.startAnchor,
+          endAnchor: section.endAnchor,
           label: section.label,
           text,
           offset: start,
@@ -290,6 +318,7 @@ export function registerTools(
         query: z
           .string()
           .min(1)
+          .max(500)
           .describe("Word or phrase to find (case-insensitive by default)."),
         maxResults: z
           .number()
@@ -480,7 +509,7 @@ export function registerTools(
         "List the library's series (paginated), each with book/read counts and its authors. " +
         "Use the returned series id with get_series_books to read the books in a series.",
       inputSchema: {
-        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        page: z.number().int().min(0).optional().describe("0-based page (default 0)."),
         size: z
           .number()
           .int()
@@ -521,7 +550,7 @@ export function registerTools(
         "paginated. Each item includes its series index and whether it has an EPUB.",
       inputSchema: {
         seriesId: z.number().int().describe("The series id (from list_series)."),
-        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        page: z.number().int().min(0).optional().describe("0-based page (default 0)."),
         size: z
           .number()
           .int()
@@ -555,7 +584,7 @@ export function registerTools(
         "List the library's authors (paginated) with their book counts. Use the returned " +
         "author id with get_author for a bio or get_author_books for their books.",
       inputSchema: {
-        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        page: z.number().int().min(0).optional().describe("0-based page (default 0)."),
         size: z
           .number()
           .int()
@@ -618,7 +647,7 @@ export function registerTools(
         "item includes series info and whether it has an EPUB.",
       inputSchema: {
         authorId: z.number().int().describe("The author id (from list_authors)."),
-        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        page: z.number().int().min(0).optional().describe("0-based page (default 0)."),
         size: z
           .number()
           .int()
@@ -672,7 +701,7 @@ export function registerTools(
           .number()
           .int()
           .describe("The collection id (from list_collections)."),
-        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        page: z.number().int().min(0).optional().describe("0-based page (default 0)."),
         size: z
           .number()
           .int()
@@ -690,7 +719,7 @@ export function registerTools(
     async ({ collectionId, page, size, q, collapseSeries }) =>
       guard(async () => {
         const res = await client.getCollectionBooks(collectionId, {
-          page: page ?? 1,
+          page: page ?? 0,
           size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
           q,
           collapseSeries,
@@ -733,7 +762,7 @@ export function registerTools(
           .number()
           .int()
           .describe("The smart scope id (from list_smart_scopes)."),
-        page: z.number().int().min(1).optional().describe("1-based page (default 1)."),
+        page: z.number().int().min(0).optional().describe("0-based page (default 0)."),
         size: z
           .number()
           .int()
@@ -747,7 +776,7 @@ export function registerTools(
     async ({ scopeId, page, size, q }) =>
       guard(async () => {
         const res = await client.getSmartScopeBooks(scopeId, {
-          page: page ?? 1,
+          page: page ?? 0,
           size: size ?? DEFAULT_BROWSE_PAGE_SIZE,
           q,
         });
