@@ -123,6 +123,16 @@ and remove them separately if no other installation needs them.
 
 ## Install & build
 
+Use a currently patched **Node.js 24 LTS** release for normal use. Node.js 20
+compatibility is still checked, but that line is end-of-life and is not recommended.
+CI runs the canonical checks on both Node.js 20 and 24.
+
+Tool arguments have a pre-schema budget of 128 combined object members and array
+elements, including unknown properties. Both statistic tools accept at most 100
+`libraryIds`. Oversized inputs are rejected before unbounded per-item validation;
+invalid inputs never reach BookOrbit. This is not a transport byte limit: run this
+local stdio server only with trusted MCP clients, not as a public endpoint.
+
 ```bash
 npm install
 npm run build

@@ -936,6 +936,7 @@ export function registerTools(
         kind: z.enum(LIBRARY_STAT_KINDS).describe("Which library statistic to fetch."),
         libraryIds: z
           .array(z.number().int())
+          .max(100)
           .optional()
           .describe(
             "Restrict the aggregation to these library ids (default: all visible).",
@@ -982,6 +983,7 @@ export function registerTools(
         kind: z.enum(USER_STAT_KINDS).describe("Which reading statistic to fetch."),
         libraryIds: z
           .array(z.number().int())
+          .max(100)
           .optional()
           .describe("Restrict to these library ids (default: all visible)."),
         days: z
