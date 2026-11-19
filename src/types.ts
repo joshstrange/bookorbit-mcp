@@ -15,6 +15,8 @@ export interface BookSearchResult {
 /** One file attached to a book (from GET /books/{id}). */
 export interface BookFile {
   id: number;
+  fileHash?: string | null;
+  contentVersion?: string;
   format: string;
   role: string | null;
   sizeBytes: number | null;
@@ -26,6 +28,7 @@ export interface BookFile {
 /** Full book detail (GET /books/{id}) — only the fields we use are typed. */
 export interface BookDetail {
   id: number;
+  updatedAt?: string | null;
   title: string;
   subtitle: string | null;
   authors: string[];
@@ -424,6 +427,7 @@ export interface SectionWithSize extends Section {
 /** Parsed + measured book, as persisted in the cache. */
 export interface ParsedBook {
   bookId: number;
+  fileId?: number;
   title: string;
   author: string;
   sections: SectionWithSize[];

@@ -27,13 +27,15 @@ async function main(): Promise<void> {
   const config = loadConfig();
 
   const client = new BookOrbitClient(config.client);
-  const cache = new BookCache(config.cacheDir);
+  const cache = new BookCache();
   const service = new BookService(client, cache);
 
-  const server = new McpServer({
-    name: "bookorbit-mcp",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    { name: "bookorbit-mcp", version: "0.1.0" },
+    // Count all object members/array elements before Zod validates individual
+    // values. A schema .max() alone still accumulates errors for every item.
+    { maxToolInputElements: 128 },
+  );
   registerTools(server, client, service);
 
   const transport = new StdioServerTransport();

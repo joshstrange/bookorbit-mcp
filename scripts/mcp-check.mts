@@ -1,132 +1,163 @@
-/**
- * Verifies the built MCP server over stdio: connects, lists tools, and calls
- * a couple. Run after `npm run build`: node --import tsx scripts/mcp-check.mts
- */
+/** Built-server read-only stdio qualification. Logs structural evidence, never book text/titles. */
+import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { BookOrbitClient } from "../src/bookorbit-client.js";
+import { loadConfig } from "../src/config.js";
 
-const envPath = join(process.cwd(), ".env");
-if (existsSync(envPath)) (process as any).loadEnvFile?.(envPath);
-
+const upstream = new BookOrbitClient(loadConfig().client);
+const info = (await upstream.getAppInfo()) as { version: string };
+console.log(JSON.stringify({ check: "app-info", version: info.version }));
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(([k, v]) => !k.startsWith("OP_") && v !== undefined),
+) as Record<string, string>;
 const transport = new StdioClientTransport({
-  command: "node",
+  command: process.execPath,
   args: ["dist/server.js"],
-  env: process.env as Record<string, string>,
+  env,
+  stderr: "pipe",
 });
-const client = new Client({ name: "mcp-check", version: "0.0.0" });
-await client.connect(transport);
-
-const { tools } = await client.listTools();
-console.log("tools:", tools.map((t) => t.name).join(", "));
-
-const search = await client.callTool({
-  name: "search_books",
-  arguments: { query: "Absolution", limit: 2 },
-});
-const books = JSON.parse((search.content as any)[0].text);
-console.log(
-  "search_books ->",
-  books.map((b: any) => `${b.bookId}:${b.title}(epub=${b.hasEpub})`).join(", "),
-);
-
-const list = await client.callTool({
-  name: "list_chapters",
-  arguments: { bookId: books[0].bookId },
-});
-const toc = JSON.parse((list.content as any)[0].text);
-console.log(`list_chapters -> ${toc.chapterCount} chapters, ${toc.totalChars} chars`);
-
-const chap = await client.callTool({
-  name: "get_chapter",
-  arguments: { bookId: books[0].bookId, chapter: 7, maxChars: 120 },
-});
-const c = JSON.parse((chap.content as any)[0].text);
-console.log(
-  `get_chapter[7] -> "${c.label}" hasMore=${c.hasMore}: ${JSON.stringify(c.text.slice(0, 80))}`,
-);
-
-const parse = async (r: any) => JSON.parse((r.content as any)[0].text);
-
-const related = await parse(
-  await client.callTool({
-    name: "get_related_books",
-    arguments: { bookId: books[0].bookId, kind: "similar" },
-  }),
-);
-console.log(`get_related_books(similar) -> ${related.count} book(s)`);
-
-const seriesList = await parse(
-  await client.callTool({ name: "list_series", arguments: { size: 3 } }),
-);
-console.log(`list_series -> ${seriesList.total} total`);
-
-const libStats = await parse(
-  await client.callTool({ name: "get_library_stats", arguments: {} }),
-);
-console.log(`get_library_stats -> ${libStats.totalBooks} books`);
-
-const currently = await parse(
-  await client.callTool({ name: "list_currently_reading", arguments: {} }),
-);
-console.log(`list_currently_reading -> ${currently.count} book(s)`);
-
-const suggest = await parse(
-  await client.callTool({
-    name: "suggest_metadata",
-    arguments: { kind: "authors", q: "a" },
-  }),
-);
-console.log(`suggest_metadata(authors,"a") -> ${suggest.matches.length} match(es)`);
-
-const libStat = await parse(
-  await client.callTool({
-    name: "get_library_statistic",
-    arguments: { kind: "top-authors" },
-  }),
-);
-console.log(`get_library_statistic(top-authors) -> ${libStat.data.items.length} rows`);
-
-const readStat = await parse(
-  await client.callTool({
-    name: "get_reading_statistic",
-    arguments: { kind: "peak-hours", days: 365 },
-  }),
-);
-console.log(`get_reading_statistic(peak-hours) -> ${readStat.data.length} hours`);
-
-const widget = await parse(
-  await client.callTool({
-    name: "get_dashboard_widget",
-    arguments: { kind: "library-overview" },
-  }),
-);
-console.log(
-  `get_dashboard_widget(library-overview) -> ${widget.data.totalBooks ?? "?"} books`,
-);
-
-const shelf = await parse(
-  await client.callTool({
-    name: "get_book_shelf",
-    arguments: { type: "recently-added", limit: 5 },
-  }),
-);
-console.log(`get_book_shelf(recently-added) -> ${shelf.count} book(s)`);
-
-// Image tool: verify an image content block comes back over the protocol.
-const coverRes: any = await client.callTool({
-  name: "get_book_cover",
-  arguments: { bookId: books[0].bookId, size: "thumbnail" },
-});
-const coverBlock = coverRes.content?.[0];
-if (coverBlock?.type === "image") {
+// Never relay arbitrary server stderr from a credential-bearing process.
+transport.stderr?.resume();
+const client = new Client({ name: "bookorbit-qualification", version: "0.1.0" });
+const deadline = setTimeout(() => {
+  console.error("MCP check exceeded 180s deadline.");
+  void transport.close().finally(() => process.exit(1));
+}, 180_000);
+let failures = 0;
+let passed = 0;
+let denied = 0;
+const call = async (
+  name: string,
+  args: Record<string, unknown> = {},
+  expectedDenied = false,
+) => {
+  const result = await client.callTool({ name, arguments: args }, undefined, {
+    timeout: 90_000,
+  });
+  const blocks = result.content as Array<{ type: string; text?: string; data?: string }>;
+  if (result.isError) {
+    // Only classify safe HTTP status, do not retain returned messages/data.
+    const status =
+      /BookOrbit error \((\d+)\)/.exec(blocks[0]?.text ?? "")?.[1] ?? "unknown";
+    const reason =
+      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT_IN_CHAIN|UND_ERR_CONNECT_TIMEOUT|timed out/.exec(
+        blocks[0]?.text ?? "",
+      )?.[0] ?? null;
+    console.log(
+      JSON.stringify({ tool: name, outcome: "error", status, reason, expectedDenied }),
+    );
+    if (expectedDenied && status === "403") denied++;
+    else failures++;
+    return null;
+  }
+  assert.ok(!expectedDenied, "Expected a denied App Attest route.");
+  passed++;
+  if (blocks[0]?.type === "image") {
+    assert.ok(blocks[0].data!.length > 0);
+    console.log(
+      JSON.stringify({
+        tool: name,
+        outcome: "image",
+        base64Chars: blocks[0].data!.length,
+      }),
+    );
+    return null;
+  }
+  const data = JSON.parse(blocks[0].text!);
   console.log(
-    `get_book_cover(thumbnail) -> image ${coverBlock.mimeType}, ${coverBlock.data.length} b64 chars`,
+    JSON.stringify({
+      tool: name,
+      outcome: "ok",
+      count: Array.isArray(data)
+        ? data.length
+        : (data.count ?? data.total ?? data.chapterCount ?? data.hitCount ?? null),
+    }),
   );
-} else {
-  console.log(`get_book_cover(thumbnail) -> ${coverBlock?.text ?? "(no cover)"}`);
+  return data;
+};
+try {
+  await client.connect(transport);
+  const { tools } = await client.listTools();
+  assert.ok(tools.some((t) => t.name === "browse_books"));
+  console.log(JSON.stringify({ check: "listTools", count: tools.length }));
+  const catalog = await call("browse_books", { page: 0, size: 10 });
+  assert.ok(catalog && catalog.page === 0 && catalog.items.length <= 10);
+  const bookId =
+    Number(process.env.BOOKORBIT_CHECK_BOOK_ID) ||
+    catalog.items.find((b: { hasEpub: boolean }) => b.hasEpub)?.bookId;
+  assert.ok(bookId, "Select an EPUB with BOOKORBIT_CHECK_BOOK_ID.");
+  console.log(JSON.stringify({ check: "selected", bookId }));
+  await call("search_books", { query: "a", limit: 2 });
+  await call("get_book", { bookId });
+  const toc = await call("list_chapters", { bookId });
+  if (toc) {
+    assert.ok(
+      toc.chapters.length === toc.chapterCount &&
+        toc.chapters.every((c: object) => !("text" in c)),
+    );
+    const chapter = toc.chapters.find(
+      (c: { charCount: number }) => c.charCount > 0,
+    ).chapter;
+    const text = await call("get_chapter", { bookId, chapter, maxChars: 120 });
+    assert.ok(
+      text &&
+        text.text.length > 0 &&
+        text.text.length <= 120 &&
+        text.fileId &&
+        text.spineHref,
+    );
+    const hits = await call("search_in_book", {
+      bookId,
+      query: text.text.slice(0, 12),
+      maxResults: 2,
+    });
+    assert.ok(hits && hits.hitCount > 0 && hits.hitCount <= 2);
+    await call("list_chapters", { bookId });
+  }
+  for (const name of [
+    "list_libraries",
+    "list_collections",
+    "list_smart_scopes",
+    "list_annotated_books",
+    "get_library_stats",
+    "get_reading_stats",
+  ])
+    await call(name);
+  await call("list_annotations", { page: 1, pageSize: 2 });
+  await call("get_annotations", { bookId });
+  await call("get_reading_progress", { bookId });
+  await call("get_reading_sessions", { bookId, page: 1, pageSize: 2 });
+  const series = await call("list_series", { page: 0, size: 2 });
+  if (series?.series[0])
+    await call("get_series_books", {
+      seriesId: series.series[0].seriesId,
+      page: 0,
+      size: 2,
+    });
+  const authors = await call("list_authors", { page: 0, size: 2 });
+  if (authors?.authors[0]) {
+    await call("get_author", { authorId: authors.authors[0].authorId });
+    await call("get_author_books", {
+      authorId: authors.authors[0].authorId,
+      page: 0,
+      size: 2,
+    });
+  }
+  for (const kind of ["similar", "same_series", "same_author"])
+    await call("get_related_books", { bookId, kind });
+  await call("suggest_metadata", { kind: "authors", q: "a" });
+  await call("get_library_statistic", { kind: "top-authors" });
+  await call("get_reading_statistic", { kind: "peak-hours", days: 30 });
+  await call("get_dashboard_widget", { kind: "library-overview" });
+  await call("get_book_shelf", { type: "recently-added", limit: 2 });
+  await call("get_book_cover", { bookId, size: "thumbnail" });
+  await call("list_currently_reading", {}, true);
+  await call("get_dashboard_widget", { kind: "reading-streak" }, true);
+  console.log(JSON.stringify({ check: "summary", passed, denied, failures }));
+  if (failures) process.exitCode = 1;
+} finally {
+  clearTimeout(deadline);
+  await client.close();
+  await transport.close();
 }
-
-await client.close();
-console.log("MCP CHECK OK");

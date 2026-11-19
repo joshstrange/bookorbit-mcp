@@ -1,8 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { BookCache } from "../src/cache.js";
@@ -25,6 +23,9 @@ const chapterXhtml = readFileSync(
 function stubClient(): { client: BookOrbitClient; fileFetches: string[] } {
   const fileFetches: string[] = [];
   const client = {
+    async getBook() {
+      return { files: [{ id: 7, format: "epub", contentVersion: "v1" }] };
+    },
     async getEpubInfo() {
       return info;
     },
@@ -39,14 +40,13 @@ function stubClient(): { client: BookOrbitClient; fileFetches: string[] } {
 }
 
 async function freshService() {
-  const dir = await mkdtemp(join(tmpdir(), "bookorbit-test-"));
-  const cache = new BookCache(dir);
+  const cache = new BookCache();
   const { client, fileFetches } = stubClient();
-  return { dir, cache, service: new BookService(client, cache), fileFetches };
+  return { cache, service: new BookService(client, cache), fileFetches };
 }
 
 test("parses, measures, and caches a book on first access", async () => {
-  const { dir, service } = await freshService();
+  const { service } = await freshService();
   const parsed = await service.getParsedBook(327);
 
   assert.equal(parsed.title, "Sample Book");
@@ -57,11 +57,8 @@ test("parses, measures, and caches a book on first access", async () => {
   assert.ok(parsed.sections.every((s) => s.charCount >= 0));
   assert.ok(parsed.sections.some((s) => /Arrival/i.test(s.label)));
 
-  // Cache files were written.
-  const meta = JSON.parse(await readFile(join(dir, "327", "book.json"), "utf8"));
-  assert.equal(meta.bookId, 327);
-  const section0 = await readFile(join(dir, "327", "text", "section-000.txt"), "utf8");
-  assert.ok(section0.length >= 0);
+  assert.equal(parsed.fileId, 7);
+  assert.equal(typeof (await service.getSectionText(327, 0)), "string");
 });
 
 test("second access reads from cache without refetching files", async () => {
